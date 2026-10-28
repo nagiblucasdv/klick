@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from PySide6.QtCore import QRect, QRectF, QSize
+from PySide6.QtCore import QPoint, QRect, QRectF, QSize
 from PySide6.QtGui import QGuiApplication, QImage, QScreen
 
 log = logging.getLogger(__name__)
@@ -19,6 +19,19 @@ log = logging.getLogger(__name__)
 class ScreenShot:
     screen: QScreen
     image: QImage  # pixels físicos do monitor
+    origin: QPoint  # canto do monitor no desktop virtual, em pixels físicos
+
+
+@dataclass
+class Selection:
+    image: QImage  # recorte em pixels físicos
+    rect: QRect  # área no desktop virtual, em pixels físicos (o que o ffmpeg usa)
+    logical: QRect  # área em coordenadas lógicas globais do Qt (para posicionar janelas)
+    screen: QScreen
+
+    @property
+    def device_pixel_ratio(self) -> float:
+        return self.rect.width() / self.logical.width() if self.logical.width() else 1.0
 
 
 def _physical_rect(screen: QScreen) -> tuple[int, int, int, int]:
@@ -32,10 +45,10 @@ def _physical_rect(screen: QScreen) -> tuple[int, int, int, int]:
     )
 
 
-def _grab_with_mss(screens: list[QScreen]) -> dict[QScreen, QImage]:
+def _grab_with_mss(screens: list[QScreen]) -> dict[QScreen, tuple[QImage, QPoint]]:
     import mss
 
-    images: dict[QScreen, QImage] = {}
+    images: dict[QScreen, tuple[QImage, QPoint]] = {}
     with mss.mss() as sct:
         monitors = sct.monitors[1:]  # [0] é o desktop virtual inteiro
         for screen in screens:
@@ -50,7 +63,7 @@ def _grab_with_mss(screens: list[QScreen]) -> dict[QScreen, QImage]:
             shot = sct.grab(match)
             # BGRA em memória == QImage.Format_RGB32 em little-endian.
             image = QImage(shot.bgra, shot.width, shot.height, shot.width * 4, QImage.Format.Format_RGB32)
-            images[screen] = image.copy()  # copy() desacopla do buffer do mss
+            images[screen] = (image.copy(), QPoint(match["left"], match["top"]))  # copy() desacopla do buffer
     return images
 
 
@@ -65,10 +78,12 @@ def grab_screens() -> list[ScreenShot]:
 
     shots = []
     for screen in screens:
-        image = images.get(screen)
-        if image is None:
-            image = screen.grabWindow(0).toImage()
-        shots.append(ScreenShot(screen, image))
+        if screen in images:
+            image, origin = images[screen]
+        else:
+            left, top, _, _ = _physical_rect(screen)
+            image, origin = screen.grabWindow(0).toImage(), QPoint(left, top)
+        shots.append(ScreenShot(screen, image, origin))
     return shots
 
 

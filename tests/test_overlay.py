@@ -1,4 +1,4 @@
-from PySide6.QtCore import QPoint, QRectF, Qt
+from PySide6.QtCore import QPoint, QRect, QRectF, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QImage
 from PySide6.QtTest import QTest
 
@@ -16,7 +16,7 @@ def make_shot(scale: int = 1) -> tuple[ScreenShot, QImage]:
     for x in range(20 * scale, 40 * scale):
         for y in range(20 * scale, 40 * scale):
             image.setPixelColor(x, y, QColor("red"))
-    return ScreenShot(screen, image), image
+    return ScreenShot(screen, image, QPoint(100 * scale, 0)), image
 
 
 def drag(widget, start: QPoint, end: QPoint) -> None:
@@ -59,11 +59,13 @@ def test_direct_action_finishes_on_release(qapp):
     shot, _ = make_shot()
     session = CaptureSession([shot], direct_action=Action.COPY)
     results = []
-    session.finished.connect(lambda action, image: results.append((action, image.size())))
+    session.finished.connect(lambda action, selection: results.append((action, selection)))
     session.start()
     drag(session.overlays[0], QPoint(10, 10), QPoint(30, 20))
-    assert results == [(Action.COPY, results[0][1])]
-    assert (results[0][1].width(), results[0][1].height()) == (20, 10)
+    [(action, selection)] = results
+    assert action is Action.COPY
+    assert (selection.image.width(), selection.image.height()) == (20, 10)
+    assert selection.rect == QRect(110, 10, 20, 10)  # deslocado pela origem física do monitor
 
 
 def test_escape_cancels_session(qapp):
@@ -80,9 +82,34 @@ def test_ctrl_c_copies_selection(qapp):
     shot, _ = make_shot()
     session = CaptureSession([shot])
     actions = []
-    session.finished.connect(lambda action, image: actions.append(action))
+    session.finished.connect(lambda action, selection: actions.append(action))
     session.start()
     overlay = session.overlays[0]
     drag(overlay, QPoint(10, 10), QPoint(50, 50))
     QTest.keyClick(overlay, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
     assert actions == [Action.COPY]
+
+
+def test_selection_rect_is_physical_on_high_dpi(qapp):
+    shot, _ = make_shot(scale=2)
+    overlay = SelectionOverlay(shot)
+    overlay.show()
+    drag(overlay, QPoint(20, 20), QPoint(40, 50))
+    selection = overlay.current()
+    assert selection.rect == QRect(240, 40, 40, 60)
+    assert selection.logical.size() == QRect(0, 0, 20, 30).size()
+    assert selection.device_pixel_ratio == 2
+    overlay.close()
+
+
+def test_ctrl_keys_map_to_actions(qapp):
+    for key, expected in ((Qt.Key.Key_E, Action.EDIT), (Qt.Key.Key_R, Action.RECORD), (Qt.Key.Key_G, Action.GIF)):
+        shot, _ = make_shot()
+        session = CaptureSession([shot])
+        actions = []
+        session.finished.connect(lambda action, selection: actions.append(action))
+        session.start()
+        overlay = session.overlays[0]
+        drag(overlay, QPoint(10, 10), QPoint(50, 50))
+        QTest.keyClick(overlay, key, Qt.KeyboardModifier.ControlModifier)
+        assert actions == [expected]

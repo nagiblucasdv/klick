@@ -51,5 +51,5 @@ Detalhe de UX importante: um modo **"OCR direto"**, em que você seleciona e o t
 
 - [x] **MVP:** overlay de seleção, salvar e copiar
 - [x] OCR para o clipboard
-- [ ] Gravação com ffmpeg
-- [ ] Blur, anotações e histórico
+- [x] Gravação com ffmpeg (MP4 e GIF)
+- [x] Blur, anotações e histórico

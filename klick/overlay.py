@@ -12,11 +12,23 @@ from PySide6.QtGui import (QColor, QCursor, QFont, QGuiApplication, QImage, QKey
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QToolButton, QWidget
 
 from klick.actions import Action
-from klick.capture import ScreenShot, to_physical
+from klick.capture import ScreenShot, Selection, to_physical
 
 ACCENT = QColor("#3b82f6")
 DIM = QColor(0, 0, 0, 120)
 MIN_SIZE = 3  # seleções menores que isso são tratadas como clique
+
+CTRL_KEYS = {
+    Qt.Key.Key_T: Action.OCR,
+    Qt.Key.Key_E: Action.EDIT,
+    Qt.Key.Key_R: Action.RECORD,
+    Qt.Key.Key_G: Action.GIF,
+}
+HINTS = {
+    Action.OCR: "Selecione o texto",
+    Action.RECORD: "Selecione a área para gravar",
+    Action.GIF: "Selecione a área para gravar em GIF",
+}
 
 TOOLBAR_STYLE = """
 QFrame#toolbar { background: #1f2937; border: 1px solid #374151; border-radius: 6px; }
@@ -41,7 +53,11 @@ class Toolbar(QFrame):
         self._add(layout, "Copiar", "Copiar para a área de transferência (Ctrl+C / Enter)",
                   lambda: self.triggered.emit(Action.COPY))
         self._add(layout, "Texto", "Copiar o texto da área com OCR (Ctrl+T)", lambda: self.triggered.emit(Action.OCR))
+        self._add(layout, "Editar", "Anotar ou pixelar antes de enviar (Ctrl+E)",
+                  lambda: self.triggered.emit(Action.EDIT))
         self._add(layout, "Salvar", "Salvar em arquivo (Ctrl+S)", lambda: self.triggered.emit(Action.SAVE))
+        self._add(layout, "Gravar", "Gravar a área em MP4 (Ctrl+R)", lambda: self.triggered.emit(Action.RECORD))
+        self._add(layout, "GIF", "Gravar a área em GIF (Ctrl+G)", lambda: self.triggered.emit(Action.GIF))
         self._add(layout, "✕", "Cancelar (Esc)", self.closeRequested.emit)
         self.adjustSize()
         self.hide()
@@ -56,7 +72,7 @@ class Toolbar(QFrame):
 
 
 class SelectionOverlay(QWidget):
-    selected = Signal(object, QImage)  # Action, imagem recortada
+    selected = Signal(object, object)  # Action, Selection
     cancelled = Signal()
     selectionStarted = Signal()
 
@@ -66,6 +82,7 @@ class SelectionOverlay(QWidget):
             Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool,
         )
         self._image = shot.image
+        self._screen_origin = shot.origin
         self._direct_action = direct_action
         self._selection = QRectF()
         self._origin = QPointF()
@@ -98,6 +115,15 @@ class SelectionOverlay(QWidget):
         rect = to_physical(self._selection, self.size(), self._image.size())
         return self._image.copy(rect)
 
+    def current(self) -> Selection:
+        rect = to_physical(self._selection, self.size(), self._image.size())
+        return Selection(
+            image=self._image.copy(rect),
+            rect=rect.translated(self._screen_origin),
+            logical=self._selection.toAlignedRect().translated(self.geometry().topLeft()),
+            screen=self.screen(),
+        )
+
     # --- eventos -----------------------------------------------------------
 
     def showEvent(self, event) -> None:
@@ -119,8 +145,8 @@ class SelectionOverlay(QWidget):
             self._finish(Action.COPY)
         elif event.matches(QKeySequence.StandardKey.Save):
             self._finish(Action.SAVE)
-        elif event.key() == Qt.Key.Key_T and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
-            self._finish(Action.OCR)
+        elif event.modifiers() == Qt.KeyboardModifier.ControlModifier and event.key() in CTRL_KEYS:
+            self._finish(CTRL_KEYS[event.key()])
         else:
             super().keyPressEvent(event)
 
@@ -195,14 +221,14 @@ class SelectionOverlay(QWidget):
             phys = to_physical(self._selection, self.size(), self._image.size())
             self._draw_label(p, f"{phys.width()} × {phys.height()}", self._selection.topLeft())
         elif self._drag is None:
-            hint = "Selecione o texto" if self._direct_action is Action.OCR else "Arraste para selecionar"
+            hint = HINTS.get(self._direct_action, "Arraste para selecionar")
             self._draw_hint(p, f"{hint}  ·  Esc para sair")
 
     # --- internos ----------------------------------------------------------
 
     def _finish(self, action: Action) -> None:
         if self._has_selection():
-            self.selected.emit(action, self.cropped())
+            self.selected.emit(action, self.current())
 
     def _has_selection(self) -> bool:
         return self._selection.width() >= MIN_SIZE and self._selection.height() >= MIN_SIZE
@@ -263,7 +289,7 @@ class SelectionOverlay(QWidget):
 class CaptureSession(QObject):
     """Abre um overlay por monitor e entrega a primeira seleção concluída."""
 
-    finished = Signal(object, QImage)  # Action, imagem
+    finished = Signal(object, object)  # Action, Selection
     cancelled = Signal()
 
     def __init__(self, shots: list[ScreenShot], direct_action: Action | None = None):
@@ -297,9 +323,9 @@ class CaptureSession(QObject):
             overlay.close()
         self._overlays.clear()
 
-    def _on_selected(self, action: Action, image: QImage) -> None:
+    def _on_selected(self, action: Action, selection: Selection) -> None:
         self._close_all()
-        self.finished.emit(action, image)
+        self.finished.emit(action, selection)
 
     def _on_cancelled(self) -> None:
         self._close_all()

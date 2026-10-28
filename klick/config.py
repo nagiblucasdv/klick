@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -10,11 +11,24 @@ from PySide6.QtCore import QSettings, QStandardPaths
 DEFAULT_HOTKEYS = {
     "capture": "<print_screen>",
     "ocr": "<ctrl>+<shift>+t",  # OCR direto: seleciona e o texto já vai para o clipboard
+    "record": "<ctrl>+<shift>+r",  # inicia a gravação; apertar de novo para
 }
 
 
 def _settings() -> QSettings:
+    # KLICK_SETTINGS aponta para um .ini (usado pelos testes para não tocar nas preferências reais).
+    path = os.environ.get("KLICK_SETTINGS")
+    if path:
+        return QSettings(path, QSettings.Format.IniFormat)
     return QSettings("Klick", "Klick")
+
+
+def _bool(value, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value.lower() in ("1", "true", "yes")
+    return bool(value)
 
 
 def default_save_dir() -> Path:
@@ -42,5 +56,34 @@ def ocr_language() -> str | None:
     return str(value) if value else None
 
 
-def default_filename(now: datetime | None = None) -> str:
-    return f"klick_{(now or datetime.now()):%Y-%m-%d_%H-%M-%S}.png"
+def ffmpeg_path() -> str | None:
+    value = _settings().value("record/ffmpeg")
+    return str(value) if value else None
+
+
+def record_fps() -> int:
+    return int(_settings().value("record/fps", 30))
+
+
+def history_enabled() -> bool:
+    return _bool(_settings().value("history/enabled"), True)
+
+
+def set_history_enabled(enabled: bool) -> None:
+    _settings().setValue("history/enabled", enabled)
+
+
+def history_max_items() -> int:
+    return int(_settings().value("history/max_items", 1000))
+
+
+def history_dir() -> Path:
+    value = os.environ.get("KLICK_HISTORY_DIR")
+    if value:
+        return Path(value)
+    data = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericDataLocation)
+    return Path(data or Path.home()) / "Klick" / "history"
+
+
+def default_filename(now: datetime | None = None, ext: str = "png") -> str:
+    return f"klick_{(now or datetime.now()):%Y-%m-%d_%H-%M-%S}.{ext}"

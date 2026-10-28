@@ -5,6 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from pathlib import Path
 
+from PySide6.QtCore import QMimeData, QUrl
 from PySide6.QtGui import QGuiApplication, QImage
 from PySide6.QtWidgets import QFileDialog
 
@@ -15,6 +16,9 @@ class Action(str, Enum):
     COPY = "copy"
     SAVE = "save"
     OCR = "ocr"
+    EDIT = "edit"
+    RECORD = "record"
+    GIF = "gif"
 
 
 def copy_image(image: QImage) -> None:
@@ -23,6 +27,14 @@ def copy_image(image: QImage) -> None:
 
 def copy_text(text: str) -> None:
     QGuiApplication.clipboard().setText(text)
+
+
+def copy_file(path: Path) -> None:
+    """Copia o arquivo em si (como Ctrl+C no Explorer), para colar direto em chat ou ticket."""
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(str(path))])
+    mime.setText(str(path))
+    QGuiApplication.clipboard().setMimeData(mime)
 
 
 def save_image(image: QImage) -> Path | None:
