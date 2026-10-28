@@ -14,10 +14,15 @@ from klick import config
 class Action(str, Enum):
     COPY = "copy"
     SAVE = "save"
+    OCR = "ocr"
 
 
 def copy_image(image: QImage) -> None:
     QGuiApplication.clipboard().setImage(image)
+
+
+def copy_text(text: str) -> None:
+    QGuiApplication.clipboard().setText(text)
 
 
 def save_image(image: QImage) -> Path | None:

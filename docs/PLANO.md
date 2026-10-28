@@ -50,6 +50,6 @@ Detalhe de UX importante: um modo **"OCR direto"**, em que você seleciona e o t
 ## Ordem sugerida
 
 - [x] **MVP:** overlay de seleção, salvar e copiar
-- [ ] OCR para o clipboard
+- [x] OCR para o clipboard
 - [ ] Gravação com ffmpeg
 - [ ] Blur, anotações e histórico

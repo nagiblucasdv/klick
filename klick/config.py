@@ -9,8 +9,7 @@ from PySide6.QtCore import QSettings, QStandardPaths
 
 DEFAULT_HOTKEYS = {
     "capture": "<print_screen>",
-    # Reservado para o próximo passo do plano (OCR direto).
-    # "ocr": "<ctrl>+<shift>+t",
+    "ocr": "<ctrl>+<shift>+t",  # OCR direto: seleciona e o texto já vai para o clipboard
 }
 
 
@@ -35,6 +34,12 @@ def set_save_dir(path: Path) -> None:
 def hotkeys() -> dict[str, str]:
     settings = _settings()
     return {name: str(settings.value(f"hotkeys/{name}", combo)) for name, combo in DEFAULT_HOTKEYS.items()}
+
+
+def ocr_language() -> str | None:
+    """Tag BCP-47 (ex.: "pt-BR"). None usa os idiomas do perfil do Windows."""
+    value = _settings().value("ocr/language")
+    return str(value) if value else None
 
 
 def default_filename(now: datetime | None = None) -> str:

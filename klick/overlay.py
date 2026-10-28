@@ -40,6 +40,7 @@ class Toolbar(QFrame):
         layout.setSpacing(2)
         self._add(layout, "Copiar", "Copiar para a área de transferência (Ctrl+C / Enter)",
                   lambda: self.triggered.emit(Action.COPY))
+        self._add(layout, "Texto", "Copiar o texto da área com OCR (Ctrl+T)", lambda: self.triggered.emit(Action.OCR))
         self._add(layout, "Salvar", "Salvar em arquivo (Ctrl+S)", lambda: self.triggered.emit(Action.SAVE))
         self._add(layout, "✕", "Cancelar (Esc)", self.closeRequested.emit)
         self.adjustSize()
@@ -118,6 +119,8 @@ class SelectionOverlay(QWidget):
             self._finish(Action.COPY)
         elif event.matches(QKeySequence.StandardKey.Save):
             self._finish(Action.SAVE)
+        elif event.key() == Qt.Key.Key_T and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+            self._finish(Action.OCR)
         else:
             super().keyPressEvent(event)
 
@@ -192,7 +195,8 @@ class SelectionOverlay(QWidget):
             phys = to_physical(self._selection, self.size(), self._image.size())
             self._draw_label(p, f"{phys.width()} × {phys.height()}", self._selection.topLeft())
         elif self._drag is None:
-            self._draw_hint(p, "Arraste para selecionar  ·  Esc para sair")
+            hint = "Selecione o texto" if self._direct_action is Action.OCR else "Arraste para selecionar"
+            self._draw_hint(p, f"{hint}  ·  Esc para sair")
 
     # --- internos ----------------------------------------------------------
 
