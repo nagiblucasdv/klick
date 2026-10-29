@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import sys
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass, field
 from functools import cache
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QRectF, QSize, Qt
 from PySide6.QtGui import QImage
 
 MAX_UPSCALED_AREA = 2_000_000  # acima disso, ampliar só deixa o OCR mais lento
@@ -18,6 +19,38 @@ MAX_UPSCALED_AREA = 2_000_000  # acima disso, ampliar só deixa o OCR mais lento
 
 class OcrError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class Word:
+    text: str
+    rect: QRectF  # em pixels da imagem original
+    line: int
+
+
+@dataclass(frozen=True)
+class OcrResult:
+    """Palavras em ordem de leitura, com a posição de cada uma (para selecionar como no Google Lens)."""
+    words: tuple[Word, ...] = ()
+    language: str = ""
+    lines: tuple[str, ...] = field(default=())
+
+    @property
+    def text(self) -> str:
+        return "\n".join(self.lines) if self.lines else self.text_between(0, len(self.words) - 1)
+
+    def text_between(self, first: int, last: int) -> str:
+        """Texto das palavras first..last (inclusive): espaço na mesma linha, quebra entre linhas."""
+        if not self.words:
+            return ""
+        first, last = max(0, min(first, last)), min(len(self.words) - 1, max(first, last))
+        out, line = [], None
+        for word in self.words[first:last + 1]:
+            if line is not None:
+                out.append(" " if word.line == line else "\n")
+            out.append(word.text)
+            line = word.line
+        return "".join(out)
 
 
 def scale_for_ocr(size: QSize, max_dimension: int) -> float:
@@ -65,6 +98,10 @@ def _engine(language: str | None):
 
 
 def _recognize(image: QImage, language: str | None) -> str:
+    return _recognize_words(image, language).text
+
+
+def _recognize_words(image: QImage, language: str | None) -> OcrResult:
     from winrt.windows.graphics.imaging import BitmapPixelFormat, SoftwareBitmap
     from winrt.windows.media.ocr import OcrEngine
 
@@ -79,11 +116,27 @@ def _recognize(image: QImage, language: str | None) -> str:
         bytes(image.constBits()), BitmapPixelFormat.BGRA8, image.width(), image.height()
     )
     result = engine.recognize_async(bitmap).get()
-    return "\n".join(line.text for line in result.lines)
+    words, lines = [], []
+    for index, line in enumerate(result.lines):
+        lines.append(line.text)
+        for word in line.words:
+            r = word.bounding_rect
+            words.append(Word(word.text, QRectF(r.x / factor, r.y / factor, r.width / factor, r.height / factor),
+                              index))
+    return OcrResult(tuple(words), engine.recognizer_language.language_tag, tuple(lines))
 
 
 def recognize(image: QImage, language: str | None = None) -> Future[str]:
     """Extrai o texto da imagem em segundo plano. Erros chegam como OcrError no Future."""
+    return _submit(_recognize, image, language)
+
+
+def recognize_words(image: QImage, language: str | None = None) -> Future[OcrResult]:
+    """Como recognize, mas com cada palavra e a posição dela na imagem."""
+    return _submit(_recognize_words, image, language)
+
+
+def _submit(func, image: QImage, language: str | None) -> Future:
     if sys.platform != "win32":
         future: Future[str] = Future()
         future.set_exception(OcrError("Por enquanto o OCR só funciona no Windows."))
@@ -95,4 +148,4 @@ def recognize(image: QImage, language: str | None = None) -> Future[str]:
         future.set_exception(OcrError("Pacotes do OCR ausentes. Rode: pip install -e ."))
         return future
     # copy(): a QImage não pode ser compartilhada com a thread enquanto o Qt a usa.
-    return _executor().submit(_recognize, image.copy(), language)
+    return _executor().submit(func, image.copy(), language)

@@ -1,7 +1,10 @@
+import sqlite3
+from pathlib import Path
+
 from PySide6.QtGui import QColor, QImage
 
 from klick import config
-from klick.history import History, fts_query
+from klick.history import Collection, History, fts_query
 from klick.history_ui import HistoryWindow
 
 
@@ -72,14 +75,48 @@ def test_disabled_history_stores_nothing(qapp, tmp_path):
 def test_window_lists_and_filters(qapp, tmp_path):
     history = History(tmp_path, run_ocr=False)
     history.add(image(), "copy", text="erro 500")
-    history.add(image("red"), "ocr", text="tudo certo")
+    history.add(image("blue"), "save", text="tudo certo")
+    history.add(image("red"), "ocr", text="erro lido")
     window = HistoryWindow(history)
     window.show()
-    assert window._list.count() == 2
+    assert window._list.count() == 2  # prints: copiado e salvo; a leitura fica na coleção dela
+    window.show_collection(Collection.READING)
+    assert window._list.count() == 1
+    window.show_collection(Collection.PRINTS)
     window._search.setText("erro")
     window.refresh()
     assert window._list.count() == 1
+    assert window._tab_buttons[Collection.READING].text().endswith("1")  # contagem segue a busca
     window._search.setText("nada disso")
     window.refresh()
     assert window._stack.currentWidget() is window._empty
     window.close()
+
+
+def test_collections_split_captures(qapp, tmp_path):
+    history = History(tmp_path, run_ocr=False)
+    history.add(image(), "copy", text="a")
+    history.add(image(), "edit", text="b")
+    history.add(image(), "ocr", text="c")
+    video = history.add_media(Path("C:/videos/klick_1.mp4"), "video", image(), 12.4)
+    history.add_media(Path("C:/videos/klick_2.gif"), "gif", image())
+    assert history.counts() == {Collection.PRINTS: 2, Collection.RECORDINGS: 1, Collection.GIFS: 1,
+                                Collection.READING: 1}
+    entry = history.get(video)
+    assert entry.collection is Collection.RECORDINGS
+    assert entry.media == Path("C:/videos/klick_1.mp4") and entry.duration == 12.4
+    assert entry.thumb_path.exists() and not entry.image_path.exists()
+    assert [e.id for e in history.search("klick_1")] == [video]  # o nome do arquivo é pesquisável
+
+
+def test_old_database_gets_new_columns(qapp, tmp_path):
+    db = sqlite3.connect(tmp_path / "history.db")
+    db.executescript("""
+        CREATE TABLE captures (id INTEGER PRIMARY KEY, created_at TEXT NOT NULL, source TEXT NOT NULL,
+                               width INTEGER NOT NULL, height INTEGER NOT NULL, text TEXT NOT NULL DEFAULT '');
+        INSERT INTO captures (created_at, source, width, height, text) VALUES ('2026-10-01T10:00:00', 'copy', 4, 4, '');
+    """)
+    db.close()
+    history = History(tmp_path, run_ocr=False)
+    [entry] = history.search()
+    assert entry.kind == "image" and entry.collection is Collection.PRINTS

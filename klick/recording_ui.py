@@ -8,14 +8,15 @@ from __future__ import annotations
 
 import sys
 
-from PySide6.QtCore import QRect, Qt, QTimer, Signal
+from PySide6.QtCore import QRect, QRectF, Qt, QTimer, QVariantAnimation, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPen
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QToolButton, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
-from klick.overlay import TOOLBAR_STYLE
+from klick import icons, theme
+from klick.widgets import Panel, button
 
-RECORDING_RED = QColor("#ef4444")
 BORDER = 2
+CORNER = 14
 WDA_EXCLUDEFROMCAPTURE = 0x11
 
 
@@ -28,7 +29,7 @@ def exclude_from_capture(widget: QWidget) -> None:
 
 
 class RecordingFrame(QWidget):
-    """Borda vermelha em volta da área, que não recebe cliques."""
+    """Moldura vermelha com cantos de visor em volta da área, que não recebe cliques."""
 
     def __init__(self, area: QRect):
         super().__init__(
@@ -38,7 +39,8 @@ class RecordingFrame(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.setGeometry(area.adjusted(-BORDER, -BORDER, BORDER, BORDER))
+        pad = BORDER + 2
+        self.setGeometry(area.adjusted(-pad, -pad, pad, pad))
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -46,47 +48,63 @@ class RecordingFrame(QWidget):
 
     def paintEvent(self, event) -> None:
         p = QPainter(self)
-        pen = QPen(RECORDING_RED, BORDER)
-        pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+        r = QRectF(self.rect()).adjusted(BORDER, BORDER, -BORDER, -BORDER)
+        p.setPen(QPen(QColor(theme.REC), 1))
+        p.drawRect(r)
+        pen = QPen(QColor(theme.REC), BORDER * 2)
+        pen.setCapStyle(Qt.PenCapStyle.SquareCap)
         p.setPen(pen)
-        half = BORDER / 2
-        p.drawRect(self.rect().toRectF().adjusted(half, half, -half, -half))
+        for x, dx in ((r.left(), CORNER), (r.right(), -CORNER)):
+            for y, dy in ((r.top(), CORNER), (r.bottom(), -CORNER)):
+                p.drawLine(int(x), int(y), int(x + dx), int(y))
+                p.drawLine(int(x), int(y), int(x), int(y + dy))
 
 
-class RecordingControls(QFrame):
+class RecordingControls(Panel):
+    """HUD: ponto REC, tempo, tamanho e Parar. Ao gerar o GIF vira uma barra de progresso."""
+
     stopRequested = Signal()
 
-    def __init__(self, area: QRect, elapsed):
-        super().__init__(
-            None, Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
-        )
+    def __init__(self, area: QRect, elapsed, label: str = "MP4"):
+        super().__init__()
         self._elapsed = elapsed
-        self.setObjectName("toolbar")
-        self.setStyleSheet(TOOLBAR_STYLE + "QLabel { color: #f9fafb; padding: 0 6px; }")
+        self._dot_on = True
+        self._busy = False
+        self._phase = 0.0
+
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 4, 4, 4)
-        layout.setSpacing(4)
-        self._dot = QLabel("●")
-        self._dot.setStyleSheet(f"color: {RECORDING_RED.name()}; padding: 0;")
+        layout.setContentsMargins(30, 6, 6, 6)
+        layout.setSpacing(12)
         self._time = QLabel("00:00")
-        stop = QToolButton()
-        stop.setText("■ Parar")
-        stop.setToolTip("Parar a gravação (Ctrl+Shift+R)")
-        stop.clicked.connect(self.stopRequested.emit)
-        layout.addWidget(self._dot)
+        self._time.setFont(theme.font(15, 600, mono=True))
+        self._meta = QLabel(f"{area.width()} × {area.height()} · {label}")
+        self._meta.setFont(theme.font(11, 400, mono=True))
+        self._meta.setStyleSheet(f"color: {theme.G400};")
+        self._stop = button("Parar", "secondary")
+        self._stop.setIcon(icons.icon("stop", theme.REC, size=16))
+        self._stop.setToolTip(theme.tip("Parar a gravação", "Ctrl ⇧ R"))
+        self._stop.clicked.connect(self.stopRequested.emit)
         layout.addWidget(self._time)
-        layout.addWidget(stop)
+        layout.addWidget(self._meta)
+        layout.addWidget(self._stop)
         self.adjustSize()
         self._place(area)
 
         self._timer = QTimer(self, interval=500, timeout=self._tick)
         self._timer.start()
+        self._spin = QVariantAnimation(self, startValue=0.0, endValue=1.0, duration=1200, loopCount=-1)
+        self._spin.valueChanged.connect(self._on_spin)
 
     def set_status(self, text: str) -> None:
         self._timer.stop()
+        self._busy = True
         self._time.setText(text)
-        self.findChild(QToolButton).setEnabled(False)
-        self.adjustSize()
+        self._time.setFont(theme.font(13, 600))
+        self._meta.setText("")
+        self._stop.hide()
+        self.setMinimumWidth(self.width())
+        self._spin.start()
+        self.update()
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -95,12 +113,42 @@ class RecordingControls(QFrame):
     def _tick(self) -> None:
         seconds = int(self._elapsed())
         self._time.setText(f"{seconds // 60:02d}:{seconds % 60:02d}")
-        self._dot.setVisible(not self._dot.isVisible() if seconds else True)
+        self._dot_on = not self._dot_on
+        self.update()
+
+    def _on_spin(self, value) -> None:
+        self._phase = float(value)
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        cy = self.height() / 2
+        color = QColor(theme.S500 if self._busy else theme.REC)
+        halo = QColor(color)
+        halo.setAlpha(60)
+        p.setPen(Qt.PenStyle.NoPen)
+        if self._busy or self._dot_on:
+            p.setBrush(halo)
+            p.drawEllipse(QRectF(9, cy - 8, 16, 16))
+            p.setBrush(color)
+            p.drawEllipse(QRectF(12, cy - 5, 10, 10))
+        if self._busy:
+            # barra indeterminada: um trecho laranja correndo no trilho
+            track = QRectF(self._time.geometry().right() + 14, cy - 2, max(60, self.width() - self._time.geometry().right() - 28), 4)
+            p.setBrush(QColor(theme.G700))
+            p.drawRoundedRect(track, 2, 2)
+            seg = track.width() * 0.35
+            x = track.left() + (track.width() + seg) * self._phase - seg
+            p.setClipRect(track)
+            p.setBrush(QColor(theme.S500))
+            p.drawRoundedRect(QRectF(x, track.top(), seg, track.height()), 2, 2)
 
     def _place(self, area: QRect) -> None:
         screen = QGuiApplication.screenAt(area.center()) or QGuiApplication.primaryScreen()
         bounds = screen.availableGeometry()
-        gap = BORDER + 6
+        gap = BORDER + 8
         x = area.right() - self.width()
         y = area.bottom() + gap
         if y + self.height() > bounds.bottom():
@@ -114,9 +162,9 @@ class RecordingControls(QFrame):
 class RecordingIndicator:
     """Agrupa a moldura e os controles de uma gravação."""
 
-    def __init__(self, area: QRect, elapsed):
+    def __init__(self, area: QRect, elapsed, label: str = "MP4"):
         self.frame = RecordingFrame(area)
-        self.controls = RecordingControls(area, elapsed)
+        self.controls = RecordingControls(area, elapsed, label)
         self.stopRequested = self.controls.stopRequested
 
     def show(self) -> None:

@@ -45,3 +45,27 @@ def test_record_without_ffmpeg_warns(qapp, tmp_path, monkeypatch):
 
     assert wait_for(lambda: bool(warnings), 2000)
     assert klick._indicator is None
+
+
+def test_finished_recording_goes_to_gallery(qapp, tmp_path, monkeypatch):
+    from klick.history import Collection
+    from klick.recorder import RecordFormat
+
+    klick = make_app(tmp_path)
+    monkeypatch.setattr(klick, "_show_toast", lambda toast: None)
+    klick._recording = (selection().image, RecordFormat.GIF)
+    klick._recorder.last_duration = 3.2
+    video = tmp_path / "klick_teste.gif"
+    video.write_bytes(b"GIF89a")
+    klick._on_record_finished(str(video))
+    [entry] = klick._history.search(collection=Collection.GIFS)
+    assert entry.media == video and entry.duration == 3.2
+
+
+def test_marked_selection_is_saved_as_edit(qapp, tmp_path, monkeypatch):
+    klick = make_app(tmp_path)
+    monkeypatch.setattr(klick, "_show_toast", lambda toast: None)
+    marked = selection()
+    marked.marked = True
+    klick._on_finished(Action.COPY, marked)
+    assert [e.source for e in klick._history.search()] == ["edit"]

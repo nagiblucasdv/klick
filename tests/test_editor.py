@@ -1,10 +1,11 @@
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QImage
+from PySide6.QtGui import QColor, QGuiApplication, QImage
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QToolButton
 
+from klick import theme
 from klick.actions import Action
-from klick.editor import Box, EditorWindow, Number, Pixelate, Style, Tool, render
+from klick.editor import (EditorWindow, Highlight, Marker, Measure, Pixelate, Spotlight, Step, Style, Tool,
+                          render)
 
 
 def white(w=200, h=120) -> QImage:
@@ -27,42 +28,105 @@ def drag(widget, start, end):
     QTest.mouseRelease(widget, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, end)
 
 
-def test_rect_is_drawn_in_image_pixels(qapp):
-    out = render(white(), [Box(QRectF(20, 20, 100, 60), Style(QColor("red"), 1.0))])
-    assert out.pixelColor(20, 50) == QColor("red")
-    assert out.pixelColor(70, 50) == QColor("white")
+def style(color=theme.S500) -> Style:
+    return Style(QColor(color), 1.0)
+
+
+def test_spotlight_dims_everything_else(qapp):
+    out = render(white(), [Spotlight(QRectF(50, 30, 60, 40), style())])
+    assert out.pixelColor(80, 50) == QColor("white")  # dentro: intacto
+    assert out.pixelColor(5, 5).lightness() < 160  # fora: escurecido
+
+
+def test_two_spotlights_dim_once(qapp):
+    one = render(white(), [Spotlight(QRectF(10, 10, 20, 20), style())])
+    two = render(white(), [Spotlight(QRectF(10, 10, 20, 20), style()), Spotlight(QRectF(100, 10, 20, 20), style())])
+    assert one.pixelColor(180, 100) == two.pixelColor(180, 100)
+    assert two.pixelColor(110, 20) == QColor("white")
+
+
+def test_highlight_tints_like_a_marker(qapp):
+    out = render(white(), [Highlight(QRectF(10, 10, 80, 20), style())])
+    tinted = out.pixelColor(40, 20)
+    assert tinted != QColor("white") and tinted.red() > tinted.blue()  # laranja sobre branco
 
 
 def test_pixelate_hides_detail(qapp):
     base = stripes()
-    out = render(base, [Pixelate(QRectF(0, 0, 120, 60), Style(QColor("red"), 1.0))])
+    out = render(base, [Pixelate(QRectF(0, 0, 120, 60), style())])
     # Listras de 1 px viram blocos cinza uniformes.
     a, b = out.pixelColor(10, 10), out.pixelColor(11, 10)
     assert a == b
     assert 60 < a.red() < 200
 
 
-def test_number_render(qapp):
-    out = render(white(), [Number(QPointF(50, 50), 1, Style(QColor("#3b82f6"), 1.0))])
-    assert out.pixelColor(50, 42) != QColor("white")
+def test_step_render(qapp):
+    out = render(white(), [Step(QPointF(50, 50), 1, style())])
+    assert out.pixelColor(44, 44) != QColor("white")
+
+
+def test_measure_reports_pixels_and_snaps(qapp):
+    marker = Marker(white())
+    marker.set_tool(Tool.MEASURE)
+    marker.press(QPointF(10, 50))
+    marker.move(QPointF(110, 53))  # quase horizontal: gruda
+    marker.release(QPointF(110, 53))
+    [measure] = marker.shapes
+    assert isinstance(measure, Measure)
+    assert measure.end == QPointF(110, 50) and measure.length == 100
+
+
+def test_text_is_typed_inline(qapp):
+    editor = EditorWindow(white(400, 300))
+    editor.show()
+    editor.set_tool(Tool.TEXT)
+    QTest.mouseClick(editor.canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(20, 20))
+    QTest.keyClicks(editor, "Tabela 012")
+    QTest.keyClick(editor, Qt.Key.Key_Return)
+    assert [s.text for s in editor.shapes] == ["Tabela 012"]
+    editor.close()
+
+
+def test_pick_copies_color(qapp):
+    image = white()
+    image.setPixelColor(30, 30, QColor("#ff3b30"))
+    marker = Marker(image)
+    picked = []
+    marker.picked.connect(picked.append)
+    marker.set_tool(Tool.PICK)
+    marker.press(QPointF(30.4, 30.4))
+    assert picked == ["#FF3B30"]
+    assert QGuiApplication.clipboard().text() == "#FF3B30"
+    assert marker.shapes == []
 
 
 def test_editor_draws_with_mouse_and_undo(qapp):
     editor = EditorWindow(white(400, 300), image_scale=1.0)
     editor.show()
     canvas = editor.canvas
-    editor.set_tool(Tool.RECT)
+    editor.set_tool(Tool.HIGHLIGHT)
     drag(canvas, QPoint(10, 10), QPoint(80, 60))
-    assert len(canvas.shapes) == 1
-    editor.set_tool(Tool.NUMBER)
+    assert len(editor.shapes) == 1
+    editor.set_tool(Tool.STEP)
     QTest.mouseClick(canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(150, 150))
     QTest.mouseClick(canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(200, 150))
-    assert [s.value for s in canvas.shapes if isinstance(s, Number)] == [1, 2]
-    canvas.undo()
-    assert canvas.next_number == 2
-    canvas.undo()
-    canvas.undo()
-    assert canvas.shapes == []
+    assert [s.value for s in editor.shapes if isinstance(s, Step)] == [1, 2]
+    editor.marker.undo()
+    assert editor.marker.next_number == 2
+    editor.marker.undo()
+    editor.marker.undo()
+    assert editor.shapes == []
+    editor.close()
+
+
+def test_tool_keys_switch_tools(qapp):
+    editor = EditorWindow(white(400, 300))
+    editor.show()
+    QTest.keyClick(editor, Qt.Key.Key_A)
+    assert editor.marker.tool is Tool.ARROW
+    assert editor.bar.tools[Tool.ARROW].isChecked()
+    QTest.keyClick(editor, Qt.Key.Key_C)
+    assert editor.marker.color.name() == theme.REC
     editor.close()
 
 
@@ -71,7 +135,7 @@ def test_tiny_drag_does_not_create_shape(qapp):
     editor.show()
     editor.set_tool(Tool.ARROW)
     drag(editor.canvas, QPoint(10, 10), QPoint(11, 11))
-    assert editor.canvas.shapes == []
+    assert editor.shapes == []
     editor.close()
 
 
@@ -80,21 +144,21 @@ def test_hidpi_canvas_maps_to_image_pixels(qapp):
     editor = EditorWindow(white(400, 300), image_scale=2.0)
     editor.show()
     assert editor.canvas.width() == 200
-    editor.set_tool(Tool.RECT)
+    editor.set_tool(Tool.SPOT)
     drag(editor.canvas, QPoint(10, 10), QPoint(50, 50))
-    assert editor.canvas.shapes[0].rect.normalized() == QRectF(20, 20, 80, 80)
+    assert editor.shapes[0].rect.normalized() == QRectF(20, 20, 80, 80)
     editor.close()
 
 
 def test_copy_emits_rendered_image(qapp):
     editor = EditorWindow(white(400, 300))
     editor.show()
-    editor.set_tool(Tool.RECT)
-    drag(editor.canvas, QPoint(10, 10), QPoint(80, 60))
+    editor.set_tool(Tool.SPOT)
+    drag(editor.canvas, QPoint(100, 100), QPoint(200, 200))
     results = []
     editor.done.connect(lambda action, image: results.append((action, image)))
-    copy = next(b for b in editor.findChildren(QToolButton) if b.text() == "Copiar")
-    copy.click()
+    editor.bar.done.click()
     [(action, image)] = results
     assert action is Action.COPY
-    assert image.pixelColor(10, 30) == QColor("#ef4444")  # borda do retângulo, cor padrão
+    assert image.pixelColor(150, 150) == QColor("white")
+    assert image.pixelColor(10, 10).lightness() < 160

@@ -28,6 +28,7 @@ class Selection:
     rect: QRect  # área no desktop virtual, em pixels físicos (o que o ffmpeg usa)
     logical: QRect  # área em coordenadas lógicas globais do Qt (para posicionar janelas)
     screen: QScreen
+    marked: bool = False  # a imagem já vem com as marcações feitas na própria captura
 
     @property
     def device_pixel_ratio(self) -> float:

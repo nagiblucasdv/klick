@@ -103,7 +103,7 @@ def test_selection_rect_is_physical_on_high_dpi(qapp):
 
 
 def test_ctrl_keys_map_to_actions(qapp):
-    for key, expected in ((Qt.Key.Key_E, Action.EDIT), (Qt.Key.Key_R, Action.RECORD), (Qt.Key.Key_G, Action.GIF)):
+    for key, expected in ((Qt.Key.Key_T, Action.READ), (Qt.Key.Key_R, Action.RECORD), (Qt.Key.Key_G, Action.GIF)):
         shot, _ = make_shot()
         session = CaptureSession([shot])
         actions = []
@@ -113,3 +113,48 @@ def test_ctrl_keys_map_to_actions(qapp):
         drag(overlay, QPoint(10, 10), QPoint(50, 50))
         QTest.keyClick(overlay, key, Qt.KeyboardModifier.ControlModifier)
         assert actions == [expected]
+
+
+def test_mark_happens_inside_the_capture(qapp):
+    shot, _ = make_shot()
+    session = CaptureSession([shot])
+    results = []
+    session.finished.connect(lambda action, selection: results.append((action, selection)))
+    session.start()
+    overlay = session.overlays[0]
+    drag(overlay, QPoint(10, 10), QPoint(110, 90))
+    QTest.keyClick(overlay, Qt.Key.Key_E, Qt.KeyboardModifier.ControlModifier)
+    assert overlay.marking and results == []  # Marcar não fecha a captura
+    assert not overlay._toolbar.isVisible()
+    QTest.keyClick(overlay, Qt.Key.Key_P)  # Ocultar
+    drag(overlay, QPoint(20, 20), QPoint(60, 60))
+    assert len(overlay.marker.shapes) == 1
+    QTest.keyClick(overlay, Qt.Key.Key_Return)
+    [(action, selection)] = results
+    assert action is Action.COPY and selection.marked
+    assert selection.image.size() == QRect(0, 0, 100, 80).size()
+
+
+def test_escape_leaves_mark_mode_first(qapp):
+    shot, _ = make_shot()
+    session = CaptureSession([shot])
+    cancelled = []
+    session.cancelled.connect(lambda: cancelled.append(True))
+    session.start()
+    overlay = session.overlays[0]
+    drag(overlay, QPoint(10, 10), QPoint(110, 90))
+    overlay.enter_mark()
+    QTest.keyClick(overlay, Qt.Key.Key_Escape)
+    assert not overlay.marking and overlay._toolbar.isVisible() and cancelled == []
+    QTest.keyClick(overlay, Qt.Key.Key_Escape)
+    assert cancelled == [True]
+
+
+def test_c_copies_color_under_cursor(qapp):
+    shot, _ = make_shot()
+    overlay = SelectionOverlay(shot)
+    overlay.show()
+    QTest.mouseMove(overlay, QPoint(30, 30))  # dentro do bloco vermelho
+    QTest.keyClick(overlay, Qt.Key.Key_C)
+    assert QGuiApplication.clipboard().text() == "#FF0000"
+    overlay.close()

@@ -5,7 +5,7 @@ from pathlib import Path
 
 ROOT = Path(SPECPATH).parent
 
-# O PySide6 traz o Qt inteiro; o Klick só usa Core, Gui, Widgets e Network.
+# O PySide6 traz o Qt inteiro; o Klick só usa Core, Gui, Widgets, Network e Svg (ícones).
 QT_EXCLUDES = [
     f"PySide6.{name}" for name in (
         "Qt3DAnimation", "Qt3DCore", "Qt3DExtras", "Qt3DInput", "Qt3DLogic", "Qt3DRender", "QtBluetooth",
@@ -13,7 +13,7 @@ QT_EXCLUDES = [
         "QtLocation", "QtMultimedia", "QtMultimediaWidgets", "QtNetworkAuth", "QtNfc", "QtOpenGL",
         "QtOpenGLWidgets", "QtPdf", "QtPdfWidgets", "QtPositioning", "QtQml", "QtQuick", "QtQuick3D",
         "QtQuickControls2", "QtQuickWidgets", "QtRemoteObjects", "QtScxml", "QtSensors", "QtSerialBus",
-        "QtSerialPort", "QtSpatialAudio", "QtSql", "QtStateMachine", "QtSvg", "QtSvgWidgets", "QtTest",
+        "QtSerialPort", "QtSpatialAudio", "QtSql", "QtStateMachine", "QtSvgWidgets", "QtTest",
         "QtTextToSpeech", "QtUiTools", "QtWebChannel", "QtWebEngineCore", "QtWebEngineQuick",
         "QtWebEngineWidgets", "QtWebSockets", "QtWebView", "QtXml",
     )
@@ -22,6 +22,7 @@ QT_EXCLUDES = [
 a = Analysis(
     [str(ROOT / "klick" / "__main__.py")],
     pathex=[str(ROOT)],
+    datas=[(str(ROOT / "klick" / "assets"), "klick/assets")],  # fontes Archivo e JetBrains Mono
     # pynput escolhe o backend em tempo de execução. Os módulos do winrt usados pelo OCR são achados
     # sozinhos; collect_submodules("winrt") estoura a recursão do modulegraph no Python 3.14.
     hiddenimports=["pynput.keyboard._win32", "pynput.mouse._win32"],

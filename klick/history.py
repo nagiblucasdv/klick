@@ -2,6 +2,9 @@
 
 A busca usa FTS5 com remove_diacritics, então "erro" acha "Erro" e "atencao"
 acha "Atenção". O OCR das capturas roda em segundo plano depois de salvar.
+
+As capturas se dividem em quatro coleções: prints (copiados, salvos ou marcados),
+gravações (MP4), GIFs e leitura (o que passou pelo OCR).
 """
 
 from __future__ import annotations
@@ -11,6 +14,7 @@ import sqlite3
 from concurrent.futures import Future
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, Signal
@@ -45,6 +49,28 @@ CREATE TRIGGER IF NOT EXISTS captures_au AFTER UPDATE OF text ON captures BEGIN
     INSERT INTO captures_fts(rowid, text) VALUES (new.id, new.text);
 END;
 """
+# Colunas que chegaram depois; bancos antigos ganham na abertura.
+MIGRATIONS = {
+    "kind": "ALTER TABLE captures ADD COLUMN kind TEXT NOT NULL DEFAULT 'image'",
+    "media": "ALTER TABLE captures ADD COLUMN media TEXT",
+    "duration": "ALTER TABLE captures ADD COLUMN duration REAL",
+}
+
+
+class Collection(str, Enum):
+    PRINTS = "prints"
+    RECORDINGS = "recordings"
+    GIFS = "gifs"
+    READING = "reading"
+
+
+# Como cada coleção aparece no SQL.
+FILTERS = {
+    Collection.PRINTS: "c.kind = 'image' AND c.source <> 'ocr'",
+    Collection.RECORDINGS: "c.kind = 'video'",
+    Collection.GIFS: "c.kind = 'gif'",
+    Collection.READING: "c.kind = 'image' AND c.source = 'ocr'",
+}
 
 
 @dataclass
@@ -57,6 +83,17 @@ class Entry:
     text: str
     image_path: Path
     thumb_path: Path
+    kind: str = "image"
+    media: Path | None = None  # arquivo da gravação ou do GIF
+    duration: float | None = None
+
+    @property
+    def collection(self) -> Collection:
+        if self.kind == "video":
+            return Collection.RECORDINGS
+        if self.kind == "gif":
+            return Collection.GIFS
+        return Collection.READING if self.source == "ocr" else Collection.PRINTS
 
 
 def fts_query(text: str) -> str:
@@ -78,6 +115,11 @@ class History(QObject):
         self._db = sqlite3.connect(self.root / "history.db")
         self._db.row_factory = sqlite3.Row
         self._db.executescript(SCHEMA)
+        columns = {row["name"] for row in self._db.execute("PRAGMA table_info(captures)")}
+        with self._db:
+            for name, sql in MIGRATIONS.items():
+                if name not in columns:
+                    self._db.execute(sql)
         self._ocrDone.connect(self.set_text)
 
     def close(self) -> None:
@@ -91,18 +133,21 @@ class History(QObject):
         """Guarda a captura. Sem `text`, roda o OCR em segundo plano para indexar."""
         if not self.enabled or image.isNull():
             return None
-        with self._db:
-            cur = self._db.execute(
-                "INSERT INTO captures (created_at, source, width, height, text) VALUES (?, ?, ?, ?, ?)",
-                (datetime.now().isoformat(timespec="seconds"), source, image.width(), image.height(), text or ""),
-            )
-        entry_id = cur.lastrowid
+        entry_id = self._insert(source, image, text or "", "image")
         image.save(str(self._image_path(entry_id)), "PNG")
-        thumb = image.scaledToWidth(min(THUMB_WIDTH, image.width()), Qt.TransformationMode.SmoothTransformation)
-        thumb.save(str(self._thumb_path(entry_id)), "JPG", 85)
         if text is None and self._run_ocr:
             ocr.recognize(image, config.ocr_language()).add_done_callback(
                 lambda future: self._emit_ocr(entry_id, future))
+        self.prune(config.history_max_items())
+        self.changed.emit()
+        return entry_id
+
+    def add_media(self, path: Path, kind: str, frame: QImage, duration: float | None = None) -> int | None:
+        """Guarda uma gravação ("video") ou GIF ("gif"). `frame` vira a miniatura; o arquivo fica onde está."""
+        if not self.enabled:
+            return None
+        entry_id = self._insert("record" if kind == "video" else "gif", frame, path.stem, kind,
+                                media=str(path), duration=duration)
         self.prune(config.history_max_items())
         self.changed.emit()
         return entry_id
@@ -112,21 +157,38 @@ class History(QObject):
             self._db.execute("UPDATE captures SET text = ? WHERE id = ?", (text, entry_id))
         self.changed.emit()
 
-    def search(self, query: str = "", limit: int = 200) -> list[Entry]:
+    def search(self, query: str = "", limit: int = 200, collection: Collection | None = None) -> list[Entry]:
         match = fts_query(query)
+        where = [FILTERS[collection]] if collection else []
+        args: list = []
         if match:
-            rows = self._db.execute(
-                "SELECT c.* FROM captures c JOIN captures_fts f ON f.rowid = c.id "
-                "WHERE captures_fts MATCH ? ORDER BY c.id DESC LIMIT ?", (match, limit))
+            sql = "SELECT c.* FROM captures c JOIN captures_fts f ON f.rowid = c.id WHERE captures_fts MATCH ?"
+            args.append(match)
+            sql += "".join(f" AND {w}" for w in where)
         else:
-            rows = self._db.execute("SELECT * FROM captures ORDER BY id DESC LIMIT ?", (limit,))
+            sql = "SELECT c.* FROM captures c" + (f" WHERE {' AND '.join(where)}" if where else "")
+        rows = self._db.execute(sql + " ORDER BY c.id DESC LIMIT ?", (*args, limit))
         return [self._entry(row) for row in rows]
+
+    def counts(self, query: str = "") -> dict[Collection, int]:
+        """Quantas capturas cada coleção tem (já filtradas pela busca)."""
+        match = fts_query(query)
+        out = {}
+        for collection, condition in FILTERS.items():
+            if match:
+                sql = ("SELECT COUNT(*) FROM captures c JOIN captures_fts f ON f.rowid = c.id "
+                       f"WHERE captures_fts MATCH ? AND {condition}")
+                out[collection] = self._db.execute(sql, (match,)).fetchone()[0]
+            else:
+                out[collection] = self._db.execute(f"SELECT COUNT(*) FROM captures c WHERE {condition}").fetchone()[0]
+        return out
 
     def get(self, entry_id: int) -> Entry | None:
         row = self._db.execute("SELECT * FROM captures WHERE id = ?", (entry_id,)).fetchone()
         return self._entry(row) if row else None
 
     def delete(self, entry_id: int) -> None:
+        """Tira a captura da galeria. Gravações e GIFs continuam na pasta onde foram salvos."""
         with self._db:
             self._db.execute("DELETE FROM captures WHERE id = ?", (entry_id,))
         self._image_path(entry_id).unlink(missing_ok=True)
@@ -143,6 +205,21 @@ class History(QObject):
             self._thumb_path(entry_id).unlink(missing_ok=True)
 
     # --- internos ----------------------------------------------------------
+
+    def _insert(self, source: str, image: QImage, text: str, kind: str, media: str | None = None,
+                duration: float | None = None) -> int:
+        with self._db:
+            cur = self._db.execute(
+                "INSERT INTO captures (created_at, source, width, height, text, kind, media, duration) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (datetime.now().isoformat(timespec="seconds"), source, image.width(), image.height(), text, kind,
+                 media, duration),
+            )
+        entry_id = cur.lastrowid
+        if not image.isNull():
+            thumb = image.scaledToWidth(min(THUMB_WIDTH, image.width()), Qt.TransformationMode.SmoothTransformation)
+            thumb.save(str(self._thumb_path(entry_id)), "JPG", 85)
+        return entry_id
 
     def _emit_ocr(self, entry_id: int, future: Future[str]) -> None:
         try:
@@ -169,4 +246,7 @@ class History(QObject):
             text=row["text"],
             image_path=self._image_path(row["id"]),
             thumb_path=self._thumb_path(row["id"]),
+            kind=row["kind"],
+            media=Path(row["media"]) if row["media"] else None,
+            duration=row["duration"],
         )

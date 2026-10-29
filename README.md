@@ -10,13 +10,14 @@ Aperte **PrintScreen** (ou clique no ícone da bandeja), arraste a área e escol
 | Ação | Atalho na seleção | O que acontece |
 | --- | --- | --- |
 | Copiar | `Ctrl+C`, `Enter`, duplo clique | Imagem vai para o clipboard |
-| Texto | `Ctrl+T` | OCR da área; o texto vai para o clipboard |
-| Editar | `Ctrl+E` | Abre o editor: seta, retângulo, texto, numeração (1, 2, 3) e pixelar |
+| Ler | `Ctrl+T` | Abre a leitura: arraste sobre as palavras e copie só o trecho, como no Google Lens |
+| Marcar | `Ctrl+E` | Marca o print ali mesmo, sem abrir janela (ferramentas abaixo) |
 | Salvar | `Ctrl+S` | Salva PNG/JPG (sugere `Imagens/Klick/klick_<data>.png`) |
 | Gravar | `Ctrl+R` | Grava a área em MP4 |
 | GIF | `Ctrl+G` | Grava a área em GIF, para colar em chat ou ticket |
 
-Arrastar dentro da seleção move a área; botão direito limpa; `Esc` cancela.
+Arrastar dentro da seleção move a área; botão direito limpa; `Esc` cancela. A lupa junto ao cursor mostra a posição
+e a cor do pixel; `C` copia o código da cor.
 
 **Atalhos globais**
 
@@ -24,16 +25,23 @@ Arrastar dentro da seleção move a área; botão direito limpa; `Esc` cancela.
 - `Ctrl+Shift+T`: **OCR direto** (selecionou, soltou, o texto já está no clipboard)
 - `Ctrl+Shift+R`: gravar área / parar gravação
 
+**Depois de capturar** aparece um aviso no canto da tela com a miniatura e atalhos para marcar, ler ou salvar.
+
 **Gravação:** durante a gravação aparece uma moldura vermelha e um controle com o tempo e o botão "Parar". Os dois ficam
 fora do vídeo. O arquivo vai para a pasta de capturas e já fica no clipboard como arquivo, então é só colar no chat.
 
-**Editor:** atalhos `A` seta, `R` retângulo, `T` texto, `N` número, `P` pixelar, `Ctrl+Z` desfazer, `Ctrl+C` copiar,
-`Ctrl+S` salvar. O pixelar usa blocos grandes de propósito, para não dar para recuperar CPF ou CNPJ.
+**Marcar:** para evidenciar, `D` destaque (escurece o resto), `M` marca-texto, `A` seta, `N` passo (1, 2, 3) e `T`
+texto (digitado direto); para analisar, `L` lupa, `P` ocultar, `R` medir em pixels e `I` conta-gotas. `C` troca a cor,
+`Ctrl+Z` desfaz, `Enter` copia, `Ctrl+S` salva e `Esc` volta para a seleção. O ocultar usa blocos grandes de propósito,
+para não dar para recuperar CPF ou CNPJ.
 
-**Histórico:** tudo que você copia, salva, edita ou passa no OCR fica guardado com o texto reconhecido. Em
-"Histórico…" na bandeja, busque por qualquer palavra que aparecia no print ("erro 500", "atencao" acha "Atenção").
-Duplo clique copia a imagem de novo. Dá para desligar em "Guardar histórico" (o padrão é guardar as últimas 1000
-capturas). Ficam em `%LOCALAPPDATA%\Klick\history`.
+**Galeria:** tudo que você copia, salva, marca, lê ou grava fica guardado, em quatro coleções: Prints, Gravações, GIFs
+e Leitura. A busca procura no texto que aparecia no print ("erro 500", "atencao" acha "Atenção"). `Enter` copia de
+novo (gravações e GIFs vão como arquivo); na Leitura, abre o texto para selecionar. Dá para desligar em "Guardar
+histórico" (o padrão é guardar as últimas 1000 capturas). Ficam em `%LOCALAPPDATA%\Klick\history`.
+
+**Visual:** a identidade é a "Visor" (grafite, alumínio e laranja de sinal; Archivo e JetBrains Mono, que vão junto
+com o app). Cores e estilos ficam em [klick/theme.py](klick/theme.py).
 
 ## Instalação (Windows)
 
@@ -89,10 +97,12 @@ o ffmpeg de verdade, com uma fonte de vídeo sintética no lugar da tela, e são
 | `klick/overlay.py` | Overlay de seleção, barra de ações e `CaptureSession` (um overlay por monitor) |
 | `klick/actions.py` | Copiar imagem/texto/arquivo e salvar |
 | `klick/ocr.py` | OCR via Windows.Media.Ocr, numa thread própria |
-| `klick/editor.py` | Editor de anotações e pixelar |
+| `klick/editor.py` | Ferramentas de marcar (`Marker`), usadas na captura e na janela de marcar |
+| `klick/reader.py` | Leitura estilo Lens: palavras com posição, seleção por arraste |
+| `klick/theme.py`, `icons.py`, `widgets.py` | Identidade Visor: cores, fontes, ícones, botões, aviso e confirmação |
 | `klick/recorder.py` | Gravação com ffmpeg (gdigrab/x11grab) e conversão para GIF |
 | `klick/recording_ui.py` | Moldura e controles da gravação, excluídos do vídeo |
-| `klick/history.py`, `history_ui.py` | Histórico em SQLite com busca FTS5 e a janela de busca |
+| `klick/history.py`, `history_ui.py` | Histórico em SQLite com busca FTS5 e a galeria em quatro coleções |
 | `klick/hotkeys.py` | Atalhos globais via pynput |
 | `klick/config.py` | Preferências (QSettings) |
 | `klick/single.py` | Instância única: abrir de novo repassa o comando para o Klick que já está na bandeja |

@@ -6,20 +6,22 @@ A seleção fica restrita a um monitor por vez.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import (QColor, QCursor, QFont, QGuiApplication, QImage, QKeySequence, QPainter, QPainterPath,
-                           QPen)
+from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import (QColor, QCursor, QGuiApplication, QImage, QKeySequence, QPainter, QPainterPath, QPen)
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QToolButton, QWidget
 
+from klick import icons, theme
 from klick.actions import Action
 from klick.capture import ScreenShot, Selection, to_physical
+from klick.editor import MarkBar, Marker, Tool, handle_mark_key
 
-ACCENT = QColor("#3b82f6")
-DIM = QColor(0, 0, 0, 120)
 MIN_SIZE = 3  # seleções menores que isso são tratadas como clique
+CORNER = 14  # braço dos cantos do visor
+LOUPE_PX = 15  # pixels de tela mostrados na lupa (ímpar: o do meio é o do cursor)
+LOUPE_ZOOM = 8
 
 CTRL_KEYS = {
-    Qt.Key.Key_T: Action.OCR,
+    Qt.Key.Key_T: Action.READ,
     Qt.Key.Key_E: Action.EDIT,
     Qt.Key.Key_R: Action.RECORD,
     Qt.Key.Key_G: Action.GIF,
@@ -30,11 +32,23 @@ HINTS = {
     Action.GIF: "Selecione a área para gravar em GIF",
 }
 
-TOOLBAR_STYLE = """
-QFrame#toolbar { background: #1f2937; border: 1px solid #374151; border-radius: 6px; }
-QToolButton { color: #f9fafb; background: transparent; border: none; padding: 5px 10px; border-radius: 4px; }
-QToolButton:hover { background: #374151; }
-QToolButton:pressed { background: #4b5563; }
+# (ação, ícone, rótulo, tooltip, atalho); None separa grupos
+TOOLBAR = [
+    (Action.COPY, "copy", "Copiar", "Copiar", "Enter"),
+    (Action.READ, "read", "Ler", "Ler o texto", "Ctrl T"),
+    (Action.EDIT, "mark", "Marcar", "Marcar e destacar", "Ctrl E"),
+    (Action.SAVE, "save", "Salvar", "Salvar em arquivo", "Ctrl S"),
+    None,
+    (Action.RECORD, "rec", "Gravar", "Gravar vídeo", "Ctrl R"),
+    (Action.GIF, "gif", "GIF", "Gravar GIF", "Ctrl G"),
+    None,
+    (None, "close", "Fechar", "Cancelar", "Esc"),
+]
+
+TOOLBAR_STYLE = theme.dark_panel_stylesheet() + f"""
+QToolButton {{ padding: 6px 6px 4px; min-width: 40px; }}
+QToolButton[primary="true"] {{ background: {theme.S500}; color: {theme.G950}; border-bottom: 2px solid #c94c00; }}
+QToolButton[primary="true"]:hover {{ background: {theme.S400}; }}
 """
 
 
@@ -44,31 +58,41 @@ class Toolbar(QFrame):
 
     def __init__(self, parent: QWidget):
         super().__init__(parent)
-        self.setObjectName("toolbar")
+        self.setObjectName("panel")
         self.setStyleSheet(TOOLBAR_STYLE)
         self.setCursor(Qt.CursorShape.ArrowCursor)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(2)
-        self._add(layout, "Copiar", "Copiar para a área de transferência (Ctrl+C / Enter)",
-                  lambda: self.triggered.emit(Action.COPY))
-        self._add(layout, "Texto", "Copiar o texto da área com OCR (Ctrl+T)", lambda: self.triggered.emit(Action.OCR))
-        self._add(layout, "Editar", "Anotar ou pixelar antes de enviar (Ctrl+E)",
-                  lambda: self.triggered.emit(Action.EDIT))
-        self._add(layout, "Salvar", "Salvar em arquivo (Ctrl+S)", lambda: self.triggered.emit(Action.SAVE))
-        self._add(layout, "Gravar", "Gravar a área em MP4 (Ctrl+R)", lambda: self.triggered.emit(Action.RECORD))
-        self._add(layout, "GIF", "Gravar a área em GIF (Ctrl+G)", lambda: self.triggered.emit(Action.GIF))
-        self._add(layout, "✕", "Cancelar (Esc)", self.closeRequested.emit)
+        label_font = theme.font(11, 600, 88)
+        self.buttons: dict[Action | None, QToolButton] = {}
+        for entry in TOOLBAR:
+            if entry is None:
+                divider = QFrame(objectName="divider")
+                divider.setFixedWidth(1)
+                layout.addWidget(divider)
+                continue
+            action, icon_name, label, tip, key = entry
+            primary = action is Action.COPY
+            color = theme.REC if action is Action.RECORD else (theme.G950 if primary else theme.A300)
+            hover = color if action is Action.RECORD or primary else theme.S400
+            button = QToolButton()
+            button.setText(label)
+            button.setIcon(icons.icon(icon_name, color, hover=hover))
+            button.setIconSize(QSize(18, 18))
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            button.setFont(label_font)
+            button.setToolTip(theme.tip(tip, key))
+            button.setProperty("primary", primary)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            if action is None:
+                button.clicked.connect(self.closeRequested.emit)
+            else:
+                button.clicked.connect(lambda _=False, a=action: self.triggered.emit(a))
+            self.buttons[action] = button
+            layout.addWidget(button)
         self.adjustSize()
         self.hide()
-
-    @staticmethod
-    def _add(layout: QHBoxLayout, text: str, tip: str, slot) -> None:
-        button = QToolButton()
-        button.setText(text)
-        button.setToolTip(tip)
-        button.clicked.connect(slot)
-        layout.addWidget(button)
 
 
 class SelectionOverlay(QWidget):
@@ -87,6 +111,10 @@ class SelectionOverlay(QWidget):
         self._selection = QRectF()
         self._origin = QPointF()
         self._drag: str | None = None  # "create" | "move"
+        self._cursor: QPointF | None = None
+        self._picked: str | None = None  # cor copiada com C, mostrada na lupa
+        self._marker: Marker | None = None  # marcação dentro da própria captura
+        self._markbar: MarkBar | None = None
 
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setMouseTracking(True)
@@ -107,8 +135,49 @@ class SelectionOverlay(QWidget):
         return QRectF(self._selection)
 
     def clear_selection(self) -> None:
+        self.exit_mark()
         self._selection = QRectF()
         self._toolbar.hide()
+        self.update()
+
+    @property
+    def marking(self) -> bool:
+        return self._marker is not None
+
+    @property
+    def marker(self) -> Marker | None:
+        return self._marker
+
+    def enter_mark(self) -> None:
+        """Marca o print aqui mesmo: a barra vira a régua de ferramentas ao lado da seleção."""
+        if not self._has_selection() or self._marker is not None:
+            return
+        self._toolbar.hide()
+        self._marker = Marker(self.cropped(), self._image.width() / max(1, self.width()))
+        self._marker.changed.connect(self.update)
+        self._marker.picked.connect(self._on_picked)
+        if self._markbar is None:
+            bar = MarkBar(self)
+            bar.toolChosen.connect(self._set_tool)
+            bar.colorRequested.connect(lambda: bar.set_color(self._marker.cycle_color()))
+            bar.undoRequested.connect(lambda: self._marker.undo())
+            bar.saveRequested.connect(lambda: self._finish(Action.SAVE))
+            bar.doneRequested.connect(lambda: self._finish(Action.COPY))
+            self._markbar = bar
+        self._markbar.set_tool(Tool.SPOT)
+        self._markbar.set_color(self._marker.color)
+        self._place_markbar()
+        self.setCursor(Qt.CursorShape.CrossCursor)
+        self.update()
+
+    def exit_mark(self) -> None:
+        if self._marker is None:
+            return
+        self._marker = None
+        if self._markbar is not None:
+            self._markbar.hide()
+        if self._has_selection():
+            self._place_toolbar()
         self.update()
 
     def cropped(self) -> QImage:
@@ -117,12 +186,20 @@ class SelectionOverlay(QWidget):
 
     def current(self) -> Selection:
         rect = to_physical(self._selection, self.size(), self._image.size())
+        marked = self._marker is not None and bool(self._marker.shapes or self._marker.editing)
         return Selection(
-            image=self._image.copy(rect),
+            image=self._marker.result() if marked else self._image.copy(rect),
             rect=rect.translated(self._screen_origin),
             logical=self._selection.toAlignedRect().translated(self.geometry().topLeft()),
             screen=self.screen(),
+            marked=marked,
         )
+
+    def pixel_at(self, pos: QPointF) -> QPoint:
+        """Pixel físico da imagem congelada sob um ponto lógico do overlay."""
+        sx = self._image.width() / max(1, self.width())
+        sy = self._image.height() / max(1, self.height())
+        return QPoint(min(int(pos.x() * sx), self._image.width() - 1), min(int(pos.y() * sy), self._image.height() - 1))
 
     # --- eventos -----------------------------------------------------------
 
@@ -138,7 +215,19 @@ class SelectionOverlay(QWidget):
         self.setFocus()
         super().enterEvent(event)
 
+    def leaveEvent(self, event) -> None:
+        self._cursor = None
+        self.update()
+        super().leaveEvent(event)
+
     def keyPressEvent(self, event) -> None:
+        if self._marker is not None:
+            if handle_mark_key(self._marker, self._markbar, event):
+                self.update()
+                return
+            if event.key() == Qt.Key.Key_Escape:
+                self.exit_mark()
+                return
         if event.key() == Qt.Key.Key_Escape:
             self.cancelled.emit()
         elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) or event.matches(QKeySequence.StandardKey.Copy):
@@ -147,11 +236,17 @@ class SelectionOverlay(QWidget):
             self._finish(Action.SAVE)
         elif event.modifiers() == Qt.KeyboardModifier.ControlModifier and event.key() in CTRL_KEYS:
             self._finish(CTRL_KEYS[event.key()])
+        elif event.key() == Qt.Key.Key_C and event.modifiers() == Qt.KeyboardModifier.NoModifier and self._cursor:
+            self._pick_color()
         else:
             super().keyPressEvent(event)
 
     def mousePressEvent(self, event) -> None:
         pos = event.position()
+        if self._marker is not None:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._marker.press(self._to_crop(pos))
+            return
         if event.button() == Qt.MouseButton.RightButton:
             if self._has_selection():
                 self.clear_selection()
@@ -173,6 +268,12 @@ class SelectionOverlay(QWidget):
 
     def mouseMoveEvent(self, event) -> None:
         pos = self._clamp(event.position())
+        self._cursor = pos
+        self._picked = None
+        if self._marker is not None:
+            self._marker.move(self._to_crop(pos))
+            self.update()
+            return
         if self._drag == "create":
             self._selection = QRectF(self._origin, pos).normalized()
         elif self._drag == "move":
@@ -182,10 +283,13 @@ class SelectionOverlay(QWidget):
         else:
             inside = self._has_selection() and self._selection.contains(event.position())
             self.setCursor(Qt.CursorShape.SizeAllCursor if inside else Qt.CursorShape.CrossCursor)
-            return
         self.update()
 
     def mouseReleaseEvent(self, event) -> None:
+        if self._marker is not None:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._marker.release(self._to_crop(event.position()))
+            return
         if event.button() != Qt.MouseButton.LeftButton or self._drag is None:
             return
         self._drag = None
@@ -199,6 +303,8 @@ class SelectionOverlay(QWidget):
         self.update()
 
     def mouseDoubleClickEvent(self, event) -> None:
+        if self._marker is not None:
+            return
         if self._has_selection() and self._selection.contains(event.position()):
             self._finish(Action.COPY)
 
@@ -211,30 +317,70 @@ class SelectionOverlay(QWidget):
         dim.addRect(QRectF(self.rect()))
         if self._has_selection():
             dim.addRect(self._selection)
-        p.fillPath(dim, DIM)
+        p.fillPath(dim, theme.DIM)
 
+        if self._marker is not None:
+            scale = self._marker.scale
+            p.save()
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            p.setClipRect(self._selection)
+            p.translate(self._selection.topLeft())
+            p.scale(1 / scale, 1 / scale)
+            self._marker.paint(p)
+            p.restore()
         if self._has_selection():
-            pen = QPen(ACCENT, 1)
-            pen.setCosmetic(True)
-            p.setPen(pen)
-            p.drawRect(self._selection)
-            phys = to_physical(self._selection, self.size(), self._image.size())
-            self._draw_label(p, f"{phys.width()} × {phys.height()}", self._selection.topLeft())
+            self._draw_selection(p)
         elif self._drag is None:
             hint = HINTS.get(self._direct_action, "Arraste para selecionar")
-            self._draw_hint(p, f"{hint}  ·  Esc para sair")
+            self._draw_hint(p, hint)
+        picking = self._marker is not None and self._marker.tool is Tool.PICK
+        if self._cursor is not None and self._drag != "move" and not self._toolbar.isVisible() \
+                and (self._marker is None or picking):
+            self._draw_loupe(p, self._cursor)
 
     # --- internos ----------------------------------------------------------
 
     def _finish(self, action: Action) -> None:
-        if self._has_selection():
-            self.selected.emit(action, self.current())
+        if not self._has_selection():
+            return
+        if action is Action.EDIT and self._direct_action is None:
+            self.enter_mark()
+            return
+        self.selected.emit(action, self.current())
+
+    def _to_crop(self, pos: QPointF) -> QPointF:
+        """Ponto lógico do overlay -> pixel do recorte que está sendo marcado."""
+        scale = self._marker.scale
+        return QPointF((pos.x() - self._selection.left()) * scale, (pos.y() - self._selection.top()) * scale)
+
+    def _set_tool(self, tool: Tool) -> None:
+        self._marker.set_tool(tool)
+        self.update()
+
+    def _on_picked(self, color: str) -> None:
+        self._picked = color
+        self.update()
+
+    def _place_markbar(self) -> None:
+        bar = self._markbar
+        bar.adjustSize()
+        gap = 10
+        sel = self._selection
+        x = sel.right() + gap
+        if x + bar.width() > self.width():
+            x = sel.left() - gap - bar.width()
+        if x < 0:
+            x = sel.right() - bar.width() - gap  # sem espaço dos lados: fica dentro, à direita
+        y = min(max(sel.top(), 4), self.height() - bar.height() - 4)
+        bar.move(round(x), round(y))
+        bar.show()
+        bar.raise_()
 
     def _has_selection(self) -> bool:
         return self._selection.width() >= MIN_SIZE and self._selection.height() >= MIN_SIZE
 
     def _clamp(self, pos: QPointF) -> QPointF:
-        return QPointF(min(max(pos.x(), 0), self.width()), min(max(pos.y(), 0), self.height()))
+        return QPointF(min(max(pos.x(), 0), self.width() - 1), min(max(pos.y(), 0), self.height() - 1))
 
     def _keep_inside(self, rect: QRectF) -> QRectF:
         x = min(max(rect.x(), 0), self.width() - rect.width())
@@ -242,48 +388,146 @@ class SelectionOverlay(QWidget):
         rect.moveTo(x, y)
         return rect
 
+    def _pick_color(self) -> None:
+        color = self._image.pixelColor(self.pixel_at(self._cursor)).name().upper()
+        QGuiApplication.clipboard().setText(color)
+        self._picked = color
+        self.update()
+
     def _place_toolbar(self) -> None:
         tb = self._toolbar
         tb.adjustSize()
-        gap = 6
+        gap = 8
         sel = self._selection
-        x = sel.right() - tb.width()
+        x = sel.left()
         y = sel.bottom() + gap
         if y + tb.height() > self.height():
-            y = sel.top() - tb.height() - gap
+            y = sel.top() - tb.height() - gap - 26  # acima, deixando lugar para a medida
         if y < 0:
             y = sel.bottom() - tb.height() - gap
-        x = min(max(x, 0), self.width() - tb.width())
+        x = min(max(x, 4), self.width() - tb.width() - 4)
         tb.move(round(x), round(y))
         tb.show()
         tb.raise_()
 
-    def _draw_label(self, p: QPainter, text: str, anchor: QPointF) -> None:
-        font = QFont(self.font())
-        font.setPointSizeF(9)
-        p.setFont(font)
+    def _draw_selection(self, p: QPainter) -> None:
+        sel = self._selection
+        pen = QPen(QColor(247, 246, 243, 230), 1)
+        pen.setCosmetic(True)
+        p.setPen(pen)
+        p.drawRect(sel)
+
+        if self._drag == "create":
+            # Linhas dos terços enquanto arrasta, como no visor de uma câmera.
+            guide = QPen(QColor(255, 255, 255, 70), 1)
+            guide.setCosmetic(True)
+            p.setPen(guide)
+            for i in (1, 2):
+                x = sel.left() + sel.width() * i / 3
+                y = sel.top() + sel.height() * i / 3
+                p.drawLine(QPointF(x, sel.top()), QPointF(x, sel.bottom()))
+                p.drawLine(QPointF(sel.left(), y), QPointF(sel.right(), y))
+
+        corner = QPen(QColor(theme.S500), 3)
+        corner.setCapStyle(Qt.PenCapStyle.SquareCap)
+        corner.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+        p.setPen(corner)
+        arm = min(CORNER, sel.width() / 2, sel.height() / 2)
+        for x, dx in ((sel.left() - 1, arm), (sel.right() + 1, -arm)):
+            for y, dy in ((sel.top() - 1, arm), (sel.bottom() + 1, -arm)):
+                p.drawPolyline([QPointF(x + dx, y), QPointF(x, y), QPointF(x, y + dy)])
+
+        phys = to_physical(sel, self.size(), self._image.size())
+        self._badge(p, f"{phys.width()} × {phys.height()}", sel.topLeft())
+
+    def _badge(self, p: QPainter, text: str, anchor: QPointF) -> None:
+        p.setFont(theme.font(12, 600, mono=True))
         metrics = p.fontMetrics()
-        box = QRectF(0, 0, metrics.horizontalAdvance(text) + 12, metrics.height() + 6)
-        y = anchor.y() - box.height() - 4
-        box.moveTo(anchor.x(), y if y >= 0 else anchor.y() + 4)
+        box = QRectF(0, 0, metrics.horizontalAdvance(text) + 14, metrics.height() + 6)
+        y = anchor.y() - box.height() - 6
+        box.moveTo(anchor.x() - 1, y if y >= 0 else anchor.y() + 6)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(17, 24, 39, 220))
-        p.drawRoundedRect(box, 4, 4)
-        p.setPen(QColor("#f9fafb"))
+        p.setBrush(QColor(theme.S500))
+        p.drawRoundedRect(box, 2, 2)
+        p.setPen(QColor(theme.G950))
         p.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
 
     def _draw_hint(self, p: QPainter, text: str) -> None:
-        font = QFont(self.font())
-        font.setPointSizeF(10)
-        p.setFont(font)
+        p.setFont(theme.font(13, 500))
         metrics = p.fontMetrics()
-        box = QRectF(0, 0, metrics.horizontalAdvance(text) + 24, metrics.height() + 12)
-        box.moveCenter(QPointF(self.width() / 2, 40 + box.height() / 2))
+        key_font = theme.font(11, 500, mono=True)
+        key = "Esc"
+        key_w = 30
+        box = QRectF(0, 0, metrics.horizontalAdvance(text) + key_w + 40, 34)
+        box.moveCenter(QPointF(self.width() / 2, 44))
+        p.setPen(QPen(QColor(theme.G700), 1))
+        p.setBrush(QColor(theme.G900))
+        p.drawRoundedRect(box, 4, 4)
+        p.setPen(QColor(theme.PAPER))
+        p.drawText(box.adjusted(16, 0, 0, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
+        kbox = QRectF(box.right() - key_w - 12, box.center().y() - 9, key_w, 18)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(17, 24, 39, 200))
-        p.drawRoundedRect(box, 6, 6)
-        p.setPen(QColor("#f9fafb"))
-        p.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
+        p.setBrush(QColor(theme.G700))
+        p.drawRoundedRect(kbox, 2, 2)
+        p.setFont(key_font)
+        p.setPen(QColor(theme.A200))
+        p.drawText(kbox, Qt.AlignmentFlag.AlignCenter, key)
+
+    def _draw_loupe(self, p: QPainter, pos: QPointF) -> None:
+        """Lupa junto ao cursor: pixels ampliados, posição física e a cor do ponto."""
+        center = self.pixel_at(pos)
+        half = LOUPE_PX // 2
+        source = QRect(center.x() - half, center.y() - half, LOUPE_PX, LOUPE_PX)
+        size = LOUPE_PX * LOUPE_ZOOM
+        info_h = 24
+        x, y = pos.x() + 22, pos.y() + 22
+        if x + size > self.width():
+            x = pos.x() - 22 - size
+        if y + size + info_h > self.height():
+            y = pos.y() - 22 - size - info_h
+        lens = QRectF(x, y, size, size)
+
+        p.save()
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(theme.G900))
+        p.drawRoundedRect(lens.adjusted(-3, -3, 3, 3 + info_h), 4, 4)
+        p.setClipRect(lens)
+        p.fillRect(lens, QColor(theme.G950))
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
+        visible = source.intersected(self._image.rect())
+        if not visible.isEmpty():
+            target = QRectF(lens.left() + (visible.left() - source.left()) * LOUPE_ZOOM,
+                            lens.top() + (visible.top() - source.top()) * LOUPE_ZOOM,
+                            visible.width() * LOUPE_ZOOM, visible.height() * LOUPE_ZOOM)
+            p.drawImage(target, self._image, QRectF(visible))
+        grid = QPen(QColor(0, 0, 0, 28), 1)
+        p.setPen(grid)
+        for i in range(1, LOUPE_PX):
+            p.drawLine(QPointF(lens.left() + i * LOUPE_ZOOM, lens.top()), QPointF(lens.left() + i * LOUPE_ZOOM, lens.bottom()))
+            p.drawLine(QPointF(lens.left(), lens.top() + i * LOUPE_ZOOM), QPointF(lens.right(), lens.top() + i * LOUPE_ZOOM))
+        cross = QColor(theme.S500)
+        cross.setAlpha(90)
+        mid = half * LOUPE_ZOOM
+        p.fillRect(QRectF(lens.left() + mid, lens.top(), LOUPE_ZOOM, size), cross)
+        p.fillRect(QRectF(lens.left(), lens.top() + mid, size, LOUPE_ZOOM), cross)
+        p.setPen(QPen(QColor(theme.S500), 1.5))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRect(QRectF(lens.left() + mid, lens.top() + mid, LOUPE_ZOOM, LOUPE_ZOOM))
+        p.setClipping(False)
+        p.setPen(QPen(QColor(theme.G600), 1))
+        p.drawRect(lens)
+
+        color = self._image.pixelColor(center) if self._image.rect().contains(center) else QColor("black")
+        info = QRectF(lens.left(), lens.bottom() + 3, size, info_h - 3)
+        p.setFont(theme.font(10.5, 500, mono=True))
+        p.setPen(QColor(theme.A100))
+        label = f"Copiado {self._picked}" if self._picked else f"x {center.x()}  y {center.y()}"
+        p.drawText(info.adjusted(2, 0, -20, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, label)
+        chip = QRectF(info.right() - 15, info.center().y() - 6.5, 13, 13)
+        p.setPen(QPen(QColor(theme.G600), 1))
+        p.setBrush(color)
+        p.drawRoundedRect(chip, 2, 2)
+        p.restore()
 
 
 class CaptureSession(QObject):

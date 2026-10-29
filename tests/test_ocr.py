@@ -37,7 +37,7 @@ def test_recognize_outside_windows_reports_error():
         recognize(QImage(10, 10, QImage.Format.Format_RGB32)).result()
 
 
-def test_ctrl_t_triggers_ocr(qapp):
+def test_ctrl_t_opens_reading(qapp):
     shot, _ = make_shot()
     session = CaptureSession([shot])
     actions = []
@@ -46,7 +46,7 @@ def test_ctrl_t_triggers_ocr(qapp):
     overlay = session.overlays[0]
     drag(overlay, QPoint(10, 10), QPoint(50, 50))
     QTest.keyClick(overlay, Qt.Key.Key_T, Qt.KeyboardModifier.ControlModifier)
-    assert actions == [Action.OCR]
+    assert actions == [Action.READ]
 
 
 def wait_for(predicate, timeout_ms: int) -> bool:

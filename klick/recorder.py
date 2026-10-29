@@ -125,6 +125,7 @@ class Recorder(QObject):
         self._target: Path | None = None
         self._stopping = False
         self._started_at = 0.0
+        self.last_duration = 0.0  # segundos da última gravação, medido ao parar
 
     @property
     def busy(self) -> bool:
@@ -171,6 +172,7 @@ class Recorder(QObject):
     def stop(self) -> None:
         if not self.recording:
             return
+        self.last_duration = self.elapsed()
         self._stopping = True
         process = self._process
         process.write(b"q")  # o ffmpeg finaliza o arquivo direitinho ao receber "q"

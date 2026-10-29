@@ -15,7 +15,8 @@ from klick import config
 class Action(str, Enum):
     COPY = "copy"
     SAVE = "save"
-    OCR = "ocr"
+    OCR = "ocr"  # OCR direto: o texto vai para o clipboard sem abrir nada
+    READ = "read"  # abre a leitura, para escolher o trecho como no Google Lens
     EDIT = "edit"
     RECORD = "record"
     GIF = "gif"
