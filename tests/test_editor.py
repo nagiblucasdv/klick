@@ -162,3 +162,19 @@ def test_copy_emits_rendered_image(qapp):
     assert action is Action.COPY
     assert image.pixelColor(150, 150) == QColor("white")
     assert image.pixelColor(10, 10).lightness() < 160
+
+
+def test_panel_tabs_follow_the_tool_and_swatches_pick_color(qapp):
+    editor = EditorWindow(white(400, 300))
+    editor.show()
+    QTest.keyClick(editor, Qt.Key.Key_R)  # Medir fica na aba Analisar
+    assert editor.bar.tabs.value == "analysis"
+    assert editor.bar.tools[Tool.MEASURE].isVisibleTo(editor.bar)
+    assert not editor.bar.tools[Tool.ARROW].isVisibleTo(editor.bar)
+    editor.bar.swatches[2].click()
+    assert editor.marker.color.name() == theme.OK
+    editor.bar.size.buttons["thick"].click()
+    editor.set_tool(Tool.ARROW)
+    drag(editor.canvas, QPoint(10, 10), QPoint(90, 60))
+    assert editor.shapes[0].style.width > style().width
+    editor.close()

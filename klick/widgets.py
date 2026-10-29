@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import QEasingCurve, QPointF, QRectF, QSize, Qt, QVariantAnimation, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPainterPath, QPen, QPixmap, QScreen
-from PySide6.QtWidgets import (QAbstractButton, QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QToolButton,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QDialog, QFrame, QHBoxLayout, QLabel, QPushButton,
+                               QToolButton, QVBoxLayout, QWidget)
 
 from klick import icons, theme
 
@@ -14,13 +14,13 @@ TOAST_MARGIN = 16
 
 
 def button(text: str, variant: str = "secondary", icon_name: str | None = None) -> QPushButton:
-    """Botão com cara de tecla: primary (laranja, um por tela), secondary, ghost ou danger."""
+    """Botão de painel, em caixa alta: primary (laranja, um por tela), secondary, ghost ou danger."""
     b = QPushButton(text)
     b.setProperty("variant", variant)
     b.setCursor(Qt.CursorShape.PointingHandCursor)
-    b.setFont(theme.font(13, 600, 94))
+    b.setFont(theme.font(12.5, 600, caps=True))
     if icon_name:
-        color = {"primary": theme.G950, "danger": "#ffffff"}.get(variant, theme.A300)
+        color = {"primary": theme.G950, "danger": theme.DANGER_FG}.get(variant, theme.A300)
         b.setIcon(icons.icon(icon_name, color, size=16))
         b.setIconSize(QSize(16, 16))
     return b
@@ -48,6 +48,84 @@ def thumbnail(image: QImage, width: int, height: int) -> QPixmap:
     pm = QPixmap.fromImage(scaled.copy(0, 0, target.width(), target.height()))
     pm.setDevicePixelRatio(ratio)
     return pm
+
+
+class Segmented(QFrame):
+    """Escolha única em botões lado a lado (ex.: Baixa | Média | Alta)."""
+
+    changed = Signal(str)
+
+    def __init__(self, options: list[tuple[str, str]], current: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("dial")
+        row = QHBoxLayout(self)
+        row.setContentsMargins(2, 2, 2, 2)
+        row.setSpacing(2)
+        self._group = QButtonGroup(self)
+        self.buttons: dict[str, QToolButton] = {}
+        for key, label in options:
+            b = QToolButton()
+            b.setText(label)
+            b.setCheckable(True)
+            b.setChecked(key == current)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _=False, k=key: self.changed.emit(k))
+            self._group.addButton(b)
+            self.buttons[key] = b
+            row.addWidget(b)
+
+    @property
+    def value(self) -> str:
+        return next(k for k, b in self.buttons.items() if b.isChecked())
+
+    def set_value(self, key: str) -> None:
+        self.buttons[key].setChecked(True)
+        self.changed.emit(key)
+
+
+class Switch(QAbstractButton):
+    """Interruptor liga/desliga, com o rótulo à esquerda (para as configurações)."""
+
+    def __init__(self, checked: bool = False, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setCheckable(True)
+        self.setChecked(checked)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedSize(38, 22)
+        self._pos = 1.0 if checked else 0.0
+        self._anim = QVariantAnimation(self, duration=120, easingCurve=QEasingCurve.Type.OutCubic)
+        self._anim.valueChanged.connect(self._move)
+        self.toggled.connect(self._animate)
+
+    def _animate(self, on: bool) -> None:
+        self._anim.stop()
+        self._anim.setStartValue(self._pos)
+        self._anim.setEndValue(1.0 if on else 0.0)
+        self._anim.start()
+
+    def _move(self, value) -> None:
+        self._pos = float(value)
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        on = QColor(theme.S500)
+        off = QColor(theme.G600)
+        track = QColor(
+            round(off.red() + (on.red() - off.red()) * self._pos),
+            round(off.green() + (on.green() - off.green()) * self._pos),
+            round(off.blue() + (on.blue() - off.blue()) * self._pos),
+        )
+        p.setPen(QPen(QColor(theme.S400), 1.5) if self.hasFocus() else Qt.PenStyle.NoPen)
+        p.setBrush(track)
+        p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
+        d = r.height() - 6
+        x = r.left() + 3 + (r.width() - d - 6) * self._pos
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(theme.A50))
+        p.drawEllipse(QRectF(x, r.top() + 3, d, d))
 
 
 class ShutterButton(QAbstractButton):
@@ -157,7 +235,7 @@ class Toast(Panel):
         if subtitle:
             sub = QLabel(subtitle)
             sub.setFont(theme.font(11, 400, mono=True))
-            sub.setStyleSheet(f"color: {theme.G300};")
+            sub.setStyleSheet(f"color: {theme.DATA};")
             sub.setWordWrap(True)
             sub.setMaximumWidth(260)
             text.addWidget(sub)
@@ -208,7 +286,7 @@ class Toast(Panel):
         r = self.panel_rect()
         track = QRectF(r.left() + 1, r.bottom() - 3, r.width() - 2, 2)
         p.fillRect(track, QColor(theme.G700))
-        p.fillRect(QRectF(track.left(), track.top(), track.width() * self._progress, 2), QColor(theme.S500))
+        p.fillRect(QRectF(track.left(), track.top(), track.width() * self._progress, 2), QColor(theme.CYAN))
 
 
 class ConfirmDialog(QDialog):

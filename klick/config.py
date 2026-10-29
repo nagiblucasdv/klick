@@ -31,6 +31,49 @@ def _bool(value, default: bool) -> bool:
     return bool(value)
 
 
+# Uma pasta por tipo de conteúdo, dentro da pasta do Klick (Imagens/Klick).
+FOLDERS = {"prints": "Prints", "recordings": "Gravações", "gifs": "GIFs", "reading": "Leitura"}
+
+# Opções que o usuário liga e desliga nas configurações da galeria.
+OPTIONS = {
+    "loupe": True,  # lupa de pixels ao selecionar
+    "guides": True,  # linhas dos terços enquanto arrasta
+    "toasts": True,  # aviso com ações depois de copiar
+    "autosave": False,  # todo print copiado também vai para a pasta Prints
+    "precise_ocr": True,  # RapidOCR refina a leitura do Windows
+    "record_ask": True,  # pergunta som e qualidade antes de gravar
+    "addon_sql": True,  # extra: SQL e tabelas na leitura
+}
+AUDIO = ("none", "system", "mic", "both")
+QUALITY = ("low", "medium", "high")
+
+
+def option(name: str) -> bool:
+    return _bool(_settings().value(f"options/{name}"), OPTIONS[name])
+
+
+def set_option(name: str, value: bool) -> None:
+    _settings().setValue(f"options/{name}", value)
+
+
+def record_audio() -> str:
+    value = str(_settings().value("record/audio", "none"))
+    return value if value in AUDIO else "none"
+
+
+def set_record_audio(value: str) -> None:
+    _settings().setValue("record/audio", value)
+
+
+def record_quality() -> str:
+    value = str(_settings().value("record/quality", "medium"))
+    return value if value in QUALITY else "medium"
+
+
+def set_record_quality(value: str) -> None:
+    _settings().setValue("record/quality", value)
+
+
 def default_save_dir() -> Path:
     pictures = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.PicturesLocation)
     return Path(pictures or Path.home()) / "Klick"
@@ -43,6 +86,11 @@ def save_dir() -> Path:
 
 def set_save_dir(path: Path) -> None:
     _settings().setValue("save_dir", str(path))
+
+
+def folder(kind: str) -> Path:
+    """Pasta de um tipo de conteúdo ("prints", "recordings", "gifs" ou "reading")."""
+    return save_dir() / FOLDERS[kind]
 
 
 def hotkeys() -> dict[str, str]:
@@ -59,10 +107,6 @@ def ocr_language() -> str | None:
 def ffmpeg_path() -> str | None:
     value = _settings().value("record/ffmpeg")
     return str(value) if value else None
-
-
-def record_fps() -> int:
-    return int(_settings().value("record/fps", 30))
 
 
 def history_enabled() -> bool:

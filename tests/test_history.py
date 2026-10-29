@@ -120,3 +120,18 @@ def test_old_database_gets_new_columns(qapp, tmp_path):
     history = History(tmp_path, run_ocr=False)
     [entry] = history.search()
     assert entry.kind == "image" and entry.collection is Collection.PRINTS
+
+
+def test_delete_permanently_removes_media_file(qapp, tmp_path):
+    from klick.history import History
+    history = History(tmp_path / "h", run_ocr=False)
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"x")
+    frame = QImage(20, 20, QImage.Format.Format_RGB32)
+    keep = history.add_media(clip, "video", frame, 2.0)
+    history.delete(keep)
+    assert clip.exists()  # só saiu da galeria
+    gone = history.add_media(clip, "video", frame, 2.0)
+    history.delete(gone, remove_file=True)
+    assert not clip.exists() and history.get(gone) is None
+    history.close()

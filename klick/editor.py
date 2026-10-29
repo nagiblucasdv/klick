@@ -15,15 +15,18 @@ from enum import Enum
 from PySide6.QtCore import QObject, QPointF, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (QColor, QFontMetricsF, QGuiApplication, QImage, QKeySequence, QPainter, QPainterPath,
                            QPen, QPolygonF, QShortcut)
-from PySide6.QtWidgets import QButtonGroup, QFrame, QHBoxLayout, QScrollArea, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout,
+                               QWidget)
 
 from klick import icons, theme
 from klick.actions import Action
 from klick.icon import app_icon
-from klick.widgets import icon_button
+from klick.widgets import Segmented, button, icon_button
 
 # Cores de anotação: sinal, REC, foco, ciano, alumínio e grafite.
 PALETTE = [theme.S500, theme.REC, theme.OK, theme.CYAN, theme.PAPER, theme.G900]
+PALETTE_NAMES = ["Laranja", "Vermelho", "Verde", "Ciano", "Branco", "Grafite"]
+SIZES = [("thin", "Fina", 0.66), ("medium", "Média", 1.0), ("thick", "Grossa", 1.6)]
 MIN_SHAPE = 4  # px de imagem; menor que isso é clique perdido
 SNAP_DEGREES = 4  # a régua gruda na horizontal/vertical perto disso
 
@@ -40,7 +43,7 @@ class Tool(str, Enum):
     PICK = "pick"
 
 
-# (ferramenta, ícone, nome, tecla); None separa grupos: evidenciar | analisar
+# (ferramenta, ícone, nome, tecla); None separa grupos: destacar | analisar
 TOOLS = [
     (Tool.SPOT, "spot", "Destaque", "D"),
     (Tool.HIGHLIGHT, "mark", "Marca-texto", "M"),
@@ -54,16 +57,36 @@ TOOLS = [
     (Tool.PICK, "drop", "Conta-gotas", "I"),
 ]
 KEYS = {Qt.Key(ord(key)): tool for entry in TOOLS if entry for tool, _, _, key in [entry]}
+# O que cada ferramenta faz, mostrado embaixo da lista.
+DESCRIPTIONS = {
+    Tool.SPOT: "Arraste uma área: o resto do print escurece.",
+    Tool.HIGHLIGHT: "Pinta por cima como caneta marca-texto.",
+    Tool.ARROW: "Arraste do ponto de partida até o alvo.",
+    Tool.STEP: "Clique para numerar: 1, 2, 3… Bom para tutorial.",
+    Tool.TEXT: "Clique e digite uma nota. Enter termina.",
+    Tool.LOUPE: "Arraste do detalhe até onde a lupa deve ficar.",
+    Tool.HIDE: "Pixela dados sensíveis, como CPF e senhas.",
+    Tool.MEASURE: "Mede a distância em pixels. Gruda na reta.",
+    Tool.PICK: "Clique num ponto para copiar a cor (#hex).",
+}
+TABS = [("evidence", "Destacar"), ("analysis", "Analisar")]
+TOOL_TAB = {tool: ("analysis" if i > TOOLS.index(None) else "evidence")
+            for i, entry in enumerate(TOOLS) if entry for tool in [entry[0]]}
 
 
 @dataclass
 class Style:
     color: QColor
     scale: float  # pixels de imagem por pixel lógico; mantém a espessura igual em telas HiDPI
+    size: float = 1.0  # espessura escolhida: fina, média ou grossa
+
+    @property
+    def unit(self) -> float:
+        return self.scale * self.size
 
     @property
     def width(self) -> float:
-        return 3 * self.scale
+        return 3 * self.unit
 
 
 def _ink(color: QColor) -> QColor:
@@ -146,7 +169,7 @@ class Step:
     style: Style
 
     def paint(self, p: QPainter, base: QImage) -> None:
-        s = self.style.scale
+        s = self.style.unit
         side = 26 * s
         box = QRectF(self.center.x() - side / 2, self.center.y() - side / 2, side, side)
         p.setPen(QPen(QColor(theme.G950), 2 * s))
@@ -169,13 +192,13 @@ class Note:
     editing: bool = False
 
     def box(self) -> QRectF:
-        s = self.style.scale
+        s = self.style.unit
         metrics = QFontMetricsF(theme.font(14 * s, 500))
         width = max(metrics.horizontalAdvance(self.text or "Digite"), 40 * s)
         return QRectF(self.pos.x(), self.pos.y(), width + 22 * s, metrics.height() + 12 * s)
 
     def paint(self, p: QPainter, base: QImage) -> None:
-        s = self.style.scale
+        s = self.style.unit
         box = self.box()
         p.setPen(QPen(QColor(theme.G700), 1 * s))
         p.setBrush(QColor(theme.G900))
@@ -356,6 +379,7 @@ class Marker(QObject):
         self.shapes: list = []
         self.tool = Tool.SPOT
         self.color = QColor(PALETTE[0])
+        self.size = 1.0
         self.draft = None
         self.editing: Note | None = None
         self._next_number = 1
@@ -371,11 +395,20 @@ class Marker(QObject):
 
     def cycle_color(self) -> QColor:
         index = (PALETTE.index(self.color.name()) + 1) % len(PALETTE) if self.color.name() in PALETTE else 0
-        self.color = QColor(PALETTE[index])
+        self.set_color(QColor(PALETTE[index]))
+        return self.color
+
+    def set_color(self, color: QColor) -> None:
+        self.color = QColor(color)
         if self.editing:
             self.editing.style.color = QColor(self.color)
         self.changed.emit()
-        return self.color
+
+    def set_size(self, size: float) -> None:
+        self.size = size
+        if self.editing:
+            self.editing.style.size = size
+        self.changed.emit()
 
     def add(self, shape) -> None:
         if shape.valid():
@@ -403,7 +436,7 @@ class Marker(QObject):
     # --- entrada -----------------------------------------------------------
 
     def _style(self) -> Style:
-        return Style(QColor(self.color), self.scale)
+        return Style(QColor(self.color), self.scale, self.size)
 
     def press(self, pos: QPointF) -> None:
         self.commit_text()
@@ -497,50 +530,174 @@ class Marker(QObject):
         paint_shapes(p, self.base, [*self.shapes, *extra])
 
 
+class ToolRow(QAbstractButton):
+    """Linha da ferramenta no painel: ícone, nome e a tecla de atalho."""
+
+    def __init__(self, icon_name: str, label: str, key: str):
+        super().__init__()
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedHeight(32)
+        self.setToolTip(theme.tip(label, key))
+        self.setAccessibleName(label)
+        self._icon = icon_name
+        self._label = label
+        self._key = key
+        self._hover = False
+
+    def enterEvent(self, event) -> None:
+        self._hover = True
+        self.update()
+
+    def leaveEvent(self, event) -> None:
+        self._hover = False
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect())
+        on = self.isChecked()
+        if on or self._hover:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(theme.G700 if on else theme.G800))
+            p.drawRoundedRect(r, 3, 3)
+        if on:
+            p.fillRect(QRectF(0, 6, 3, r.height() - 12), QColor(theme.S500))
+        color = theme.S400 if on else theme.A300
+        p.drawPixmap(10, round((r.height() - 18) / 2), icons.pixmap(self._icon, color, 18))
+        p.setFont(theme.font(13, 600 if on else 500))
+        p.setPen(QColor("#ffffff" if on else theme.A200))
+        p.drawText(r.adjusted(38, 0, -36, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self._label)
+        key = QRectF(r.right() - 28, r.center().y() - 9, 20, 18)
+        p.setPen(QPen(QColor(theme.G600), 1))
+        p.setBrush(QColor(theme.G950))
+        p.drawRoundedRect(key, 2, 2)
+        p.setFont(theme.font(10.5, 500, mono=True))
+        p.setPen(QColor(theme.A300))
+        p.drawText(key, Qt.AlignmentFlag.AlignCenter, self._key)
+        if self.hasFocus():
+            p.setPen(QPen(QColor(theme.S500), 1))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 3, 3)
+
+
+class Swatch(QAbstractButton):
+    """Bolinha de cor; a escolhida ganha um anel."""
+
+    def __init__(self, color: str, name: str):
+        super().__init__()
+        self.color = QColor(color)
+        self.setCheckable(True)
+        self.setFixedSize(26, 26)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(name)
+        self.setAccessibleName(name)
+
+    def paintEvent(self, event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        c = QPointF(self.width() / 2, self.height() / 2)
+        if self.isChecked():
+            p.setPen(QPen(QColor(theme.A50), 2))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(c, 11.5, 11.5)
+        p.setPen(QPen(QColor(theme.G600), 1))
+        p.setBrush(self.color)
+        p.drawEllipse(c, 8, 8)
+
+
 class MarkBar(QFrame):
-    """Barra vertical de ferramentas de marcação, ao lado do print."""
+    """Painel de marcação ao lado do print: abas Destacar/Analisar, cor, espessura e ações."""
 
     toolChosen = Signal(object)  # Tool
-    colorRequested = Signal()
+    colorRequested = Signal()  # tecla C: próxima cor
+    colorChosen = Signal(QColor)
+    sizeChosen = Signal(float)
     undoRequested = Signal()
     saveRequested = Signal()
     doneRequested = Signal()
+
+    WIDTH = 236
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("panel")
         self.setStyleSheet(theme.dark_panel_stylesheet())
         self.setCursor(Qt.CursorShape.ArrowCursor)
+        self.setFixedWidth(self.WIDTH)
         col = QVBoxLayout(self)
-        col.setContentsMargins(4, 4, 4, 4)
-        col.setSpacing(2)
+        col.setContentsMargins(10, 10, 10, 10)
+        col.setSpacing(8)
+
+        self.tabs = Segmented(TABS, "evidence")
+        self.tabs.changed.connect(self._show_tab)
+        col.addWidget(self.tabs)
+
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
-        self.tools: dict[Tool, QToolButton] = {}
+        self.tools: dict[Tool, ToolRow] = {}
+        self._lists: dict[str, QWidget] = {}
+        for tab, _ in TABS:
+            box = QWidget()
+            rows = QVBoxLayout(box)
+            rows.setContentsMargins(0, 0, 0, 0)
+            rows.setSpacing(2)
+            self._lists[tab] = box
+            col.addWidget(box)
         for entry in TOOLS:
             if entry is None:
-                col.addWidget(self._divider())
                 continue
             tool, icon_name, label, key = entry
-            b = icon_button(icon_name, label, key)
-            b.setCheckable(True)
-            b.clicked.connect(lambda _=False, t=tool: self.toolChosen.emit(t))
-            self._group.addButton(b)
-            self.tools[tool] = b
-            col.addWidget(b)
+            row = ToolRow(icon_name, label, key)
+            row.clicked.connect(lambda _=False, t=tool: self.toolChosen.emit(t))
+            self._group.addButton(row)
+            self.tools[tool] = row
+            self._lists[TOOL_TAB[tool]].layout().addWidget(row)
+
+        self.description = QLabel()
+        self.description.setWordWrap(True)
+        self.description.setProperty("role", "muted")
+        self.description.setFont(theme.font(11.5, 400))
+        self.description.setMinimumHeight(32)
+        col.addWidget(self.description)
+
         col.addWidget(self._divider())
-        self.color = icon_button("dot", "Trocar a cor", "C")
-        self.color.clicked.connect(self.colorRequested.emit)
+        col.addWidget(self._section("COR  ·  C troca"))
+        swatches = QHBoxLayout()
+        swatches.setSpacing(4)
+        self._colors = QButtonGroup(self)
+        self.swatches: list[Swatch] = []
+        for color, name in zip(PALETTE, PALETTE_NAMES):
+            sw = Swatch(color, name)
+            sw.clicked.connect(lambda _=False, c=color: self.colorChosen.emit(QColor(c)))
+            self._colors.addButton(sw)
+            self.swatches.append(sw)
+            swatches.addWidget(sw)
+        swatches.addStretch(1)
+        col.addLayout(swatches)
+
+        col.addWidget(self._section("ESPESSURA"))
+        self.size = Segmented([(key, label) for key, label, _ in SIZES], "medium")
+        self.size.changed.connect(lambda key: self.sizeChosen.emit(next(v for k, _, v in SIZES if k == key)))
+        col.addWidget(self.size)
+
+        col.addWidget(self._divider())
+        actions = QHBoxLayout()
+        actions.setSpacing(4)
         self.undo = icon_button("undo", "Desfazer", "Ctrl Z")
         self.undo.clicked.connect(self.undoRequested.emit)
         self.save = icon_button("save", "Salvar", "Ctrl S")
         self.save.clicked.connect(self.saveRequested.emit)
-        self.done = icon_button("check", "Copiar", "Enter")
-        self.done.setIcon(icons.icon("check", theme.G950))
-        self.done.setStyleSheet(f"QToolButton {{ background: {theme.S500}; }} QToolButton:hover {{ background: {theme.S400}; }}")
+        self.done = button("Copiar", "primary", "check")
+        self.done.setToolTip(theme.tip("Copiar o print marcado", "Enter"))
         self.done.clicked.connect(self.doneRequested.emit)
-        for b in (self.color, self.undo, self.save, self.done):
-            col.addWidget(b)
+        actions.addWidget(self.undo)
+        actions.addWidget(self.save)
+        actions.addStretch(1)
+        actions.addWidget(self.done)
+        col.addLayout(actions)
+
         self.set_tool(Tool.SPOT)
         self.set_color(QColor(PALETTE[0]))
         self.adjustSize()
@@ -551,11 +708,27 @@ class MarkBar(QFrame):
         line.setFixedHeight(1)
         return line
 
+    @staticmethod
+    def _section(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setProperty("role", "section")
+        return label
+
+    def _show_tab(self, tab: str) -> None:
+        for key, box in self._lists.items():
+            box.setVisible(key == tab)
+
     def set_tool(self, tool: Tool) -> None:
+        tab = TOOL_TAB[tool]
+        if self.tabs.value != tab:
+            self.tabs.buttons[tab].setChecked(True)
+        self._show_tab(tab)
         self.tools[tool].setChecked(True)
+        self.description.setText(DESCRIPTIONS[tool])
 
     def set_color(self, color: QColor) -> None:
-        self.color.setIcon(icons.icon("dot", color.name(), size=18))
+        for sw in self.swatches:
+            sw.setChecked(sw.color.name() == color.name())
 
 
 class Canvas(QWidget):
@@ -631,6 +804,8 @@ class EditorWindow(QWidget):
         self.bar = MarkBar()
         self.bar.toolChosen.connect(self.set_tool)
         self.bar.colorRequested.connect(lambda: self.bar.set_color(self.marker.cycle_color()))
+        self.bar.colorChosen.connect(self.set_color)
+        self.bar.sizeChosen.connect(self.marker.set_size)
         self.bar.undoRequested.connect(self.marker.undo)
         self.bar.saveRequested.connect(lambda: self._finish(Action.SAVE))
         self.bar.doneRequested.connect(lambda: self._finish(Action.COPY))
@@ -658,8 +833,8 @@ class EditorWindow(QWidget):
         self.marker.set_tool(tool)
         self.bar.set_tool(tool)
 
-    def set_color(self, color: str) -> None:
-        self.marker.color = QColor(color)
+    def set_color(self, color) -> None:
+        self.marker.set_color(QColor(color))
         self.bar.set_color(self.marker.color)
 
     def keyPressEvent(self, event) -> None:

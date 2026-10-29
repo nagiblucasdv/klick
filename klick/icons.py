@@ -39,6 +39,12 @@ PATHS = {
     "warn": f'<path d="M12 4 21 19H3z" {_S} stroke-linejoin="round"/><path d="M12 10v4M12 16.5v.5" {_S}/>',
     "stop": '<rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/>',
     "dot": '<circle cx="12" cy="12" r="5" fill="currentColor"/>',
+    "lens": f'<path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M4 15v3.5A1.5 1.5 0 0 0 5.5 20H9" {_S}/><circle cx="12" cy="12" r="3.2" {_S}/><circle cx="18" cy="18" r="2" fill="currentColor"/>',
+    "gear": f'<circle cx="12" cy="12" r="3" {_S}/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8" {_S}/>',
+    "sql": f'<ellipse cx="12" cy="6" rx="7" ry="2.5" {_S}/><path d="M5 6v12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5V6M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5" {_S}/>',
+    "table": f'<rect x="3" y="4.5" width="18" height="15" rx="1.5" {_S}/><path d="M3 9.5h18M3 14.5h18M9.5 4.5v15" {_S}/>',
+    "globe": f'<circle cx="12" cy="12" r="8" {_S}/><path d="M4 12h16M12 4c2.5 2.5 2.5 13.5 0 16M12 4c-2.5 2.5-2.5 13.5 0 16" {_S}/>',
+    "sound": f'<path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z" {_S} stroke-linejoin="round"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" {_S}/>',
 }
 
 

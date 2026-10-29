@@ -10,10 +10,11 @@ from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, S
 from PySide6.QtGui import (QColor, QCursor, QGuiApplication, QImage, QKeySequence, QPainter, QPainterPath, QPen)
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QToolButton, QWidget
 
-from klick import icons, theme
+from klick import config, icons, theme
 from klick.actions import Action
 from klick.capture import ScreenShot, Selection, to_physical
 from klick.editor import MarkBar, Marker, Tool, handle_mark_key
+from klick.recording_ui import RecordSetup
 
 MIN_SIZE = 3  # seleções menores que isso são tratadas como clique
 CORNER = 14  # braço dos cantos do visor
@@ -25,6 +26,7 @@ CTRL_KEYS = {
     Qt.Key.Key_E: Action.EDIT,
     Qt.Key.Key_R: Action.RECORD,
     Qt.Key.Key_G: Action.GIF,
+    Qt.Key.Key_L: Action.LENS,
 }
 HINTS = {
     Action.OCR: "Selecione o texto",
@@ -38,6 +40,7 @@ TOOLBAR = [
     (Action.READ, "read", "Ler", "Ler o texto", "Ctrl T"),
     (Action.EDIT, "mark", "Marcar", "Marcar e destacar", "Ctrl E"),
     (Action.SAVE, "save", "Salvar", "Salvar em arquivo", "Ctrl S"),
+    (Action.LENS, "lens", "Pesquisar", "Pesquisar a imagem no Google Lens", "Ctrl L"),
     None,
     (Action.RECORD, "rec", "Gravar", "Gravar vídeo", "Ctrl R"),
     (Action.GIF, "gif", "GIF", "Gravar GIF", "Ctrl G"),
@@ -115,6 +118,9 @@ class SelectionOverlay(QWidget):
         self._picked: str | None = None  # cor copiada com C, mostrada na lupa
         self._marker: Marker | None = None  # marcação dentro da própria captura
         self._markbar: MarkBar | None = None
+        self._setup: RecordSetup | None = None  # som e qualidade antes de gravar
+        self._loupe = config.option("loupe")
+        self._guides = config.option("guides")
 
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setMouseTracking(True)
@@ -136,6 +142,7 @@ class SelectionOverlay(QWidget):
 
     def clear_selection(self) -> None:
         self.exit_mark()
+        self.exit_record_setup()
         self._selection = QRectF()
         self._toolbar.hide()
         self.update()
@@ -160,15 +167,54 @@ class SelectionOverlay(QWidget):
             bar = MarkBar(self)
             bar.toolChosen.connect(self._set_tool)
             bar.colorRequested.connect(lambda: bar.set_color(self._marker.cycle_color()))
+            bar.colorChosen.connect(lambda color: (self._marker.set_color(color), bar.set_color(color)))
+            bar.sizeChosen.connect(lambda size: self._marker.set_size(size))
             bar.undoRequested.connect(lambda: self._marker.undo())
             bar.saveRequested.connect(lambda: self._finish(Action.SAVE))
             bar.doneRequested.connect(lambda: self._finish(Action.COPY))
             self._markbar = bar
         self._markbar.set_tool(Tool.SPOT)
         self._markbar.set_color(self._marker.color)
+        self._markbar.size.set_value("medium")
         self._place_markbar()
         self.setCursor(Qt.CursorShape.CrossCursor)
         self.update()
+
+    @property
+    def record_setup(self) -> RecordSetup | None:
+        return self._setup
+
+    def enter_record_setup(self, action: Action) -> None:
+        """Pergunta som e qualidade ao lado da seleção antes de começar a gravar."""
+        if not self._has_selection():
+            return
+        self.exit_record_setup()
+        self._toolbar.hide()
+        setup = RecordSetup(self, gif=action is Action.GIF)
+        setup.startRequested.connect(lambda quality, sound: self._start_recording(action, quality, sound))
+        setup.backRequested.connect(self._back_from_setup)
+        self._setup = setup
+        self._place_beside(setup)
+        setup.start.setFocus()
+        self.update()
+
+    def exit_record_setup(self) -> None:
+        if self._setup is not None:
+            self._setup.hide()
+            self._setup.deleteLater()
+            self._setup = None
+
+    def _back_from_setup(self) -> None:
+        self.exit_record_setup()
+        if self._direct_action is None and self._has_selection():
+            self._place_toolbar()
+        self.setFocus()
+        self.update()
+
+    def _start_recording(self, action: Action, quality: str, sound: str) -> None:
+        selection = self.current()
+        selection.quality, selection.sound = quality, sound
+        self.selected.emit(action, selection)
 
     def exit_mark(self) -> None:
         if self._marker is None:
@@ -221,6 +267,12 @@ class SelectionOverlay(QWidget):
         super().leaveEvent(event)
 
     def keyPressEvent(self, event) -> None:
+        if self._setup is not None:
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self._setup.accept()
+            elif event.key() == Qt.Key.Key_Escape:
+                self._back_from_setup()
+            return
         if self._marker is not None:
             if handle_mark_key(self._marker, self._markbar, event):
                 self.update()
@@ -247,6 +299,8 @@ class SelectionOverlay(QWidget):
             if event.button() == Qt.MouseButton.LeftButton:
                 self._marker.press(self._to_crop(pos))
             return
+        if self._setup is not None:
+            self._back_from_setup()  # clicou fora do painel: volta a selecionar
         if event.button() == Qt.MouseButton.RightButton:
             if self._has_selection():
                 self.clear_selection()
@@ -335,7 +389,7 @@ class SelectionOverlay(QWidget):
             self._draw_hint(p, hint)
         picking = self._marker is not None and self._marker.tool is Tool.PICK
         if self._cursor is not None and self._drag != "move" and not self._toolbar.isVisible() \
-                and (self._marker is None or picking):
+                and self._setup is None and (self._loupe or picking) and (self._marker is None or picking):
             self._draw_loupe(p, self._cursor)
 
     # --- internos ----------------------------------------------------------
@@ -345,6 +399,12 @@ class SelectionOverlay(QWidget):
             return
         if action is Action.EDIT and self._direct_action is None:
             self.enter_mark()
+            return
+        if action in (Action.RECORD, Action.GIF):
+            if config.option("record_ask"):
+                self.enter_record_setup(action)
+            else:
+                self._start_recording(action, config.record_quality(), config.record_audio())
             return
         self.selected.emit(action, self.current())
 
@@ -362,7 +422,10 @@ class SelectionOverlay(QWidget):
         self.update()
 
     def _place_markbar(self) -> None:
-        bar = self._markbar
+        self._place_beside(self._markbar)
+
+    def _place_beside(self, bar: QWidget) -> None:
+        """Põe um painel ao lado da seleção (direita, senão esquerda, senão dentro)."""
         bar.adjustSize()
         gap = 10
         sel = self._selection
@@ -370,7 +433,7 @@ class SelectionOverlay(QWidget):
         if x + bar.width() > self.width():
             x = sel.left() - gap - bar.width()
         if x < 0:
-            x = sel.right() - bar.width() - gap  # sem espaço dos lados: fica dentro, à direita
+            x = max(4, sel.right() - bar.width() - gap)  # sem espaço dos lados: fica dentro, à direita
         y = min(max(sel.top(), 4), self.height() - bar.height() - 4)
         bar.move(round(x), round(y))
         bar.show()
@@ -417,7 +480,7 @@ class SelectionOverlay(QWidget):
         p.setPen(pen)
         p.drawRect(sel)
 
-        if self._drag == "create":
+        if self._drag == "create" and self._guides:
             # Linhas dos terços enquanto arrasta, como no visor de uma câmera.
             guide = QPen(QColor(255, 255, 255, 70), 1)
             guide.setCosmetic(True)
@@ -446,10 +509,10 @@ class SelectionOverlay(QWidget):
         box = QRectF(0, 0, metrics.horizontalAdvance(text) + 14, metrics.height() + 6)
         y = anchor.y() - box.height() - 6
         box.moveTo(anchor.x() - 1, y if y >= 0 else anchor.y() + 6)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(theme.S500))
+        p.setPen(QPen(QColor(theme.CYAN), 1))
+        p.setBrush(QColor(theme.G900))
         p.drawRoundedRect(box, 2, 2)
-        p.setPen(QColor(theme.G950))
+        p.setPen(QColor(theme.DATA))
         p.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
 
     def _draw_hint(self, p: QPainter, text: str) -> None:
@@ -520,7 +583,7 @@ class SelectionOverlay(QWidget):
         color = self._image.pixelColor(center) if self._image.rect().contains(center) else QColor("black")
         info = QRectF(lens.left(), lens.bottom() + 3, size, info_h - 3)
         p.setFont(theme.font(10.5, 500, mono=True))
-        p.setPen(QColor(theme.A100))
+        p.setPen(QColor(theme.DATA))
         label = f"Copiado {self._picked}" if self._picked else f"x {center.x()}  y {center.y()}"
         p.drawText(info.adjusted(2, 0, -20, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, label)
         chip = QRectF(info.right() - 15, info.center().y() - 6.5, 13, 13)

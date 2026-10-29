@@ -112,7 +112,56 @@ def test_ctrl_keys_map_to_actions(qapp):
         overlay = session.overlays[0]
         drag(overlay, QPoint(10, 10), QPoint(50, 50))
         QTest.keyClick(overlay, key, Qt.KeyboardModifier.ControlModifier)
+        if expected in (Action.RECORD, Action.GIF):
+            assert overlay.record_setup is not None and actions == []  # antes pergunta som e qualidade
+            QTest.keyClick(overlay, Qt.Key.Key_Return)
         assert actions == [expected]
+
+
+def test_record_setup_passes_sound_and_quality(qapp):
+    shot, _ = make_shot()
+    session = CaptureSession([shot])
+    got = []
+    session.finished.connect(lambda action, selection: got.append(selection))
+    session.start()
+    overlay = session.overlays[0]
+    drag(overlay, QPoint(10, 10), QPoint(50, 50))
+    overlay._toolbar.buttons[Action.RECORD].click()
+    setup = overlay.record_setup
+    setup.sound.buttons["both"].click()
+    setup.quality.buttons["high"].click()
+    setup.start.click()
+    [selection] = got
+    assert (selection.sound, selection.quality) == ("both", "high")
+    from klick import config
+    assert (config.record_audio(), config.record_quality()) == ("both", "high")  # vira o padrão
+    config.set_record_audio("none")
+    config.set_record_quality("medium")
+
+
+def test_record_setup_esc_goes_back_to_toolbar(qapp):
+    shot, _ = make_shot()
+    overlay = SelectionOverlay(shot)
+    overlay.show()
+    drag(overlay, QPoint(10, 10), QPoint(50, 50))
+    overlay._finish(Action.GIF)
+    assert overlay.record_setup is not None
+    assert not overlay.record_setup.sound.isVisibleTo(overlay.record_setup)  # GIF não tem som
+    QTest.keyClick(overlay, Qt.Key.Key_Escape)
+    assert overlay.record_setup is None and overlay._toolbar.isVisible()
+    overlay.close()
+
+
+def test_loupe_can_be_turned_off(qapp):
+    from klick import config
+    config.set_option("loupe", False)
+    try:
+        shot, _ = make_shot()
+        overlay = SelectionOverlay(shot)
+        assert overlay._loupe is False
+        overlay.close()
+    finally:
+        config.set_option("loupe", True)
 
 
 def test_mark_happens_inside_the_capture(qapp):

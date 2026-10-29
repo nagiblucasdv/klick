@@ -24,8 +24,9 @@ QT_EXCLUDES = [
 a = Analysis(
     [str(ROOT / "klick" / "__main__.py")],
     pathex=[str(ROOT)],
-    # fontes Archivo e JetBrains Mono; modelos e configurações do RapidOCR (baixados pelo build.ps1)
-    datas=[(str(ROOT / "klick" / "assets"), "klick/assets"), *collect_data_files("rapidocr")],
+    # fontes Barlow e JetBrains Mono; modelos e configurações do RapidOCR (baixados pelo build.ps1)
+    datas=[(str(ROOT / "klick" / "assets"), "klick/assets"), *collect_data_files("rapidocr"),
+           *collect_data_files("soundcard")],
     # pynput escolhe o backend em tempo de execução. Os módulos do winrt usados pelo OCR são achados
     # sozinhos; collect_submodules("winrt") estoura a recursão do modulegraph no Python 3.14.
     hiddenimports=["pynput.keyboard._win32", "pynput.mouse._win32",

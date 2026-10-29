@@ -1,8 +1,9 @@
-"""Identidade Visor: cores, fontes e folhas de estilo do Klick.
+"""Identidade Painel: cores, fontes e folhas de estilo do Klick.
 
-Referência visual: grafite e alumínio no corpo, laranja de sinal só na ação principal,
-medidas em fonte mono. Tudo o que fica por cima da tela (seleção, barras, menus, avisos,
-HUD) é sempre grafite; as janelas (galeria, leitura) seguem o tema do Windows.
+Estrutura do Windows 11 (barra lateral como no Explorador, cantos de 8 px nas janelas)
+com os instrumentos de um painel: aço azulado no corpo, laranja de sinal só nas ações,
+leituras (tamanho, hora, fps, contagens) em ciano e fonte mono. Botões em caixa alta.
+Tudo é escuro, por cima da tela e nas janelas.
 """
 
 from __future__ import annotations
@@ -11,30 +12,35 @@ from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QGuiApplication
+from PySide6.QtGui import QColor, QFont, QFontDatabase
 
 FONTS_DIR = Path(__file__).with_name("assets") / "fonts"
-FAMILY = "Archivo"
+FAMILY = "Barlow"
+DISPLAY = "Barlow Condensed"  # títulos e rótulos estreitos
 MONO = "JetBrains Mono"
 
-# Grafite: barras, menus, HUD e janelas no escuro.
+# Aço: fundos, painéis, linhas e texto apagado (os nomes G* vêm da identidade anterior).
 G950, G900, G850, G800, G700, G600, G500, G400, G300 = (
-    "#121110", "#1a1917", "#201f1c", "#272522", "#32302c", "#403d38", "#5c5851", "#7f7a71", "#a8a398")
-# Alumínio: janelas no claro e texto sobre grafite.
-A50, A100, A200, A300, A400 = "#f7f6f3", "#efede8", "#e3e0d9", "#d2cec5", "#b8b3a8"
-PAPER = "#f2f0eb"
-# Sinal: a cor da marca. 700 é para texto laranja sobre fundo claro.
+    "#0b1216", "#111b21", "#142027", "#18252d", "#24363f", "#2f4651", "#4f6672", "#7d929c", "#a9bcc4")
+# Claros: texto sobre o aço.
+A50, A100, A200, A300, A400 = "#f1f6f8", "#d8e4ea", "#c3d2d9", "#a9bcc4", "#8fa3ad"
+PAPER = "#e6eef2"
+# Sinal: a cor das ações. 700 é para texto laranja sobre fundo claro.
 S400, S500, S600, S700 = "#ff8a47", "#ff6a13", "#e85600", "#b64200"
-# Estados: nunca se confundem com a marca.
+# Estados e leituras: nunca se confundem com a ação.
 OK, REC, WARN, CYAN = "#3ad07c", "#ff3b30", "#ffb020", "#3cc6f0"
+DATA = "#5fd3f5"  # números e medidas
+DANGER_BG, DANGER_FG, DANGER_LINE = "#3a1214", "#ff6b6b", "#6b2023"
 
-DIM = QColor(18, 17, 16, 150)  # escurecimento fora da seleção
+RADIUS = 3  # controles (botões, campos)
+WINDOW_RADIUS = 6  # cartões e painéis
+
+DIM = QColor(11, 18, 22, 150)  # escurecimento fora da seleção
 
 
 @dataclass(frozen=True)
 class Scheme:
-    """Cores de janela (galeria, leitura) num dos dois temas."""
+    """Cores das janelas (galeria, leitura, configurações)."""
     dark: bool
     bg: str
     surface: str
@@ -47,40 +53,42 @@ class Scheme:
     selected_fg: str
 
 
-LIGHT = Scheme(False, A100, A50, "#ffffff", G900, G500, A300, S700, G900, A50)
-DARK = Scheme(True, G950, G900, G850, PAPER, G300, G700, S400, PAPER, G950)
+DARK = Scheme(True, G950, G900, G850, PAPER, G400, G700, S400, G700, DATA)
+LIGHT = DARK  # o Painel é sempre escuro; o nome fica para quem ainda importa
 
 
 def load_fonts() -> None:
-    """Registra Archivo e JetBrains Mono (variáveis) que vão junto com o app."""
+    """Registra Barlow, Barlow Condensed e JetBrains Mono, que vão junto com o app."""
     if getattr(load_fonts, "done", False):
         return
-    for name in ("Archivo.ttf", "JetBrainsMono.ttf"):
-        QFontDatabase.addApplicationFont(str(FONTS_DIR / name))
+    for path in sorted(FONTS_DIR.glob("*.ttf")):
+        QFontDatabase.addApplicationFont(str(path))
     load_fonts.done = True
 
 
-def font(px: float, weight: int = 500, width: int = 100, mono: bool = False) -> QFont:
-    """Fonte do Visor em pixels. `width` é o eixo de largura da Archivo (88 barra, 100 interface, 125 títulos)."""
+def font(px: float, weight: int = 500, width: int = 100, mono: bool = False, caps: bool = False) -> QFont:
+    """Fonte do Painel em pixels. `width` acima de 100 usa a Barlow Condensed (títulos); `caps` deixa em
+    caixa alta com espaçamento, como nos botões."""
     load_fonts()
-    f = QFont(MONO if mono else FAMILY)
+    family = MONO if mono else (DISPLAY if width > 100 else FAMILY)
+    f = QFont(family)
     f.setPixelSize(round(px))
     f.setWeight(QFont.Weight(weight))
-    if not mono:
-        f.setVariableAxis(QFont.Tag("wdth"), float(width))
+    if caps:
+        f.setCapitalization(QFont.Capitalization.AllUppercase)
+        f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.9)
     f.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
     return f
 
 
 def window_scheme() -> Scheme:
-    hints = QGuiApplication.styleHints()
-    return DARK if hints.colorScheme() == Qt.ColorScheme.Dark else LIGHT
+    return DARK
 
 
 @cache
 def _kbd_style() -> str:
-    return (f"font-family:'{MONO}'; font-size:10px; color:{A200}; background:{G700};"
-            " padding:0 4px; border-radius:2px;")
+    return (f"font-family:'{MONO}'; font-size:10px; color:{DATA}; background:{G800};"
+            f" padding:0 4px; border-radius:2px;")
 
 
 def tip(label: str, shortcut: str | None = None) -> str:
@@ -90,99 +98,87 @@ def tip(label: str, shortcut: str | None = None) -> str:
     return f"{label}&nbsp;&nbsp;<span style=\"{_kbd_style()}\">&nbsp;{shortcut}&nbsp;</span>"
 
 
-# Botões: cara de tecla de câmera (borda inferior escura que some ao pressionar).
+# Botões de painel: retos, caixa alta (pela fonte, ver widgets.button), laranja só na ação.
 _BUTTONS = f"""
-QPushButton {{ font-family: '{FAMILY}'; font-size: 13px; font-weight: 600; min-height: 30px; padding: 0 14px;
-    border-radius: 3px; border: 1px solid transparent; }}
-QPushButton[variant="primary"] {{ background: {S500}; color: {G950}; border-bottom: 2px solid #c94c00; }}
+QPushButton {{ min-height: 30px; padding: 0 14px; border-radius: {RADIUS}px; border: 1px solid transparent; }}
+QPushButton[variant="primary"] {{ background: {S500}; color: {G950}; }}
 QPushButton[variant="primary"]:hover {{ background: {S400}; }}
-QPushButton[variant="primary"]:pressed {{ background: {S600}; border-bottom-width: 1px; padding-top: 1px; }}
-QPushButton[variant="danger"] {{ background: {REC}; color: #ffffff; border-bottom: 2px solid #b8231b; }}
-QPushButton[variant="danger"]:hover {{ background: #ff5a50; }}
-QPushButton[variant="danger"]:pressed {{ background: #e02b21; border-bottom-width: 1px; padding-top: 1px; }}
-QPushButton:disabled {{ background: transparent; color: {G400}; border-color: {G700}; }}
-"""
-
-_DARK_BUTTONS = f"""
-QPushButton[variant="secondary"] {{ background: {G700}; color: {PAPER}; border-color: {G600}; border-bottom-color: {G950}; }}
-QPushButton[variant="secondary"]:hover {{ background: {G600}; }}
-QPushButton[variant="secondary"]:pressed {{ background: {G800}; padding-top: 1px; }}
+QPushButton[variant="primary"]:pressed {{ background: {S600}; padding-top: 1px; }}
+QPushButton[variant="danger"] {{ background: {DANGER_BG}; color: {DANGER_FG}; border-color: {DANGER_LINE}; }}
+QPushButton[variant="danger"]:hover {{ background: #4a171a; }}
+QPushButton[variant="danger"]:pressed {{ background: #2d0e10; padding-top: 1px; }}
+QPushButton[variant="secondary"] {{ background: {G800}; color: {PAPER}; border-color: {G700}; }}
+QPushButton[variant="secondary"]:hover {{ background: {G700}; }}
+QPushButton[variant="secondary"]:pressed {{ background: {G850}; padding-top: 1px; }}
 QPushButton[variant="ghost"] {{ background: transparent; color: {A300}; }}
-QPushButton[variant="ghost"]:hover {{ background: rgba(255,255,255,0.07); color: {PAPER}; }}
-QPushButton[variant="ghost"]:pressed {{ background: rgba(255,255,255,0.04); }}
-QPushButton:focus {{ border-color: {S500}; }}
-QPushButton[variant="primary"]:focus, QPushButton[variant="danger"]:focus {{ border-color: {A50}; }}
+QPushButton[variant="ghost"]:hover {{ background: {G800}; color: {PAPER}; }}
+QPushButton[variant="ghost"]:pressed {{ background: {G850}; }}
+QPushButton[variant="ghost"]:checked {{ background: {G700}; color: {DATA}; border-bottom: 2px solid {CYAN}; }}
+QPushButton:disabled {{ background: transparent; color: {G500}; border-color: {G700}; }}
+QPushButton:focus {{ border-color: {CYAN}; }}
 """
-
-
-def _light_buttons(s: Scheme) -> str:
-    return f"""
-QPushButton[variant="secondary"] {{ background: {s.surface}; color: {s.fg}; border-color: {s.line}; border-bottom-color: {A400}; }}
-QPushButton[variant="secondary"]:hover {{ background: #ffffff; }}
-QPushButton[variant="secondary"]:pressed {{ background: {A200}; padding-top: 1px; }}
-QPushButton[variant="ghost"] {{ background: transparent; color: {G600}; }}
-QPushButton[variant="ghost"]:hover {{ background: rgba(0,0,0,0.05); color: {G900}; }}
-QPushButton:focus {{ border-color: {S500}; }}
-QPushButton[variant="primary"]:focus {{ border-color: {G900}; }}
+# Abas e escolhas (Segmented): a escolhida ganha a linha ciano embaixo.
+_DIAL = f"""
+QFrame#dial {{ background: {G950}; border: 1px solid {G700}; border-radius: {RADIUS + 1}px; }}
+QFrame#dial QToolButton {{ color: {A400}; background: transparent; border: none; border-radius: {RADIUS}px;
+    padding: 5px 10px; font-family: '{FAMILY}'; font-size: 12.5px; font-weight: 600; }}
+QFrame#dial QToolButton:hover {{ color: {PAPER}; background: {G800}; }}
+QFrame#dial QToolButton:checked {{ background: {G700}; color: {DATA}; border-bottom: 2px solid {CYAN}; }}
 """
 
 
 def app_stylesheet() -> str:
-    """Estilo global: tooltips, menus (bandeja e botão direito) e diálogos são sempre grafite."""
+    """Estilo global: tooltips, menus (bandeja e botão direito) e diálogos."""
     return f"""
-QToolTip {{ background: {G950}; color: {PAPER}; border: 1px solid {G700}; padding: 4px 7px; border-radius: 3px;
-    font-family: '{FAMILY}'; font-size: 12px; }}
-QMenu {{ background: {G900}; color: {PAPER}; border: 1px solid {G700}; border-radius: 4px; padding: 5px;
-    font-family: '{FAMILY}'; font-size: 13px; min-width: 250px; }}
-QMenu::item {{ padding: 7px 18px 7px 10px; border-radius: 3px; }}
+QToolTip {{ background: {G800}; color: {PAPER}; border: 1px solid {G700}; padding: 4px 7px; border-radius: {RADIUS}px;
+    font-family: '{FAMILY}'; font-size: 12.5px; }}
+QMenu {{ background: {G900}; color: {PAPER}; border: 1px solid {G700}; border-radius: {WINDOW_RADIUS}px; padding: 5px;
+    font-family: '{FAMILY}'; font-size: 13.5px; min-width: 250px; }}
+QMenu::item {{ padding: 7px 18px 7px 10px; border-radius: {RADIUS}px; }}
 QMenu::item:selected {{ background: {G700}; }}
 QMenu::item:disabled {{ color: {G500}; }}
 QMenu::icon {{ padding-left: 8px; }}
 QMenu::separator {{ height: 1px; background: {G700}; margin: 5px 4px; }}
 QMenu::right-arrow {{ width: 8px; }}
 QDialog#klickDialog {{ background: {G900}; }}
-QDialog#klickDialog QLabel {{ color: {A300}; font-family: '{FAMILY}'; font-size: 13px; }}
+QDialog#klickDialog QLabel {{ color: {A300}; font-family: '{FAMILY}'; font-size: 13.5px; }}
 QDialog#klickDialog QLabel#title {{ color: {PAPER}; }}
 QFrame#dialogFoot {{ background: {G850}; border-top: 1px solid {G700}; }}
 QLabel#hint {{ color: {G400}; font-size: 11px; }}
-{_BUTTONS}{_DARK_BUTTONS}
+{_BUTTONS}
 """
 
 
 def dark_panel_stylesheet() -> str:
     """Barras e HUD que ficam por cima da tela."""
     return f"""
-QFrame#panel {{ background: {G900}; border: 1px solid {G700}; border-radius: 4px; }}
-QToolButton {{ color: {A300}; background: transparent; border: none; border-radius: 3px; padding: 6px; }}
+QFrame#panel {{ background: {G900}; border: 1px solid {G700}; border-radius: {WINDOW_RADIUS}px; }}
+QToolButton {{ color: {A300}; background: transparent; border: none; border-radius: {RADIUS}px; padding: 6px; }}
 QToolButton:hover {{ background: {G700}; color: #ffffff; }}
 QToolButton:pressed {{ background: {G800}; }}
-QToolButton:checked {{ background: {S500}; color: {G950}; }}
-QToolButton:focus {{ border: 1px solid {S500}; }}
+QToolButton:checked {{ background: {G700}; color: {DATA}; }}
+QToolButton:focus {{ border: 1px solid {CYAN}; }}
 QLabel {{ color: {PAPER}; }}
 QFrame#divider {{ background: {G700}; }}
-{_BUTTONS}{_DARK_BUTTONS}
+QLabel[role="muted"] {{ color: {G400}; }}
+QLabel[role="section"] {{ color: {G400}; font-family: '{MONO}'; font-size: 10.5px; letter-spacing: 1px; }}
+{_DIAL}{_BUTTONS}
 """
 
 
-def window_stylesheet(s: Scheme) -> str:
-    """Janelas (galeria, leitura) no tema do Windows."""
-    buttons = _DARK_BUTTONS if s.dark else _light_buttons(s)
-    scroll_handle = G600 if s.dark else A400
+def window_stylesheet(s: Scheme = DARK) -> str:
+    """Janelas (galeria, leitura, configurações)."""
     return f"""
 QWidget#window {{ background: {s.bg}; color: {s.fg}; }}
 QWidget#window QLabel {{ color: {s.fg}; }}
 QWidget#window QLabel[role="muted"] {{ color: {s.muted}; }}
-QLineEdit {{ background: {s.field}; color: {s.fg}; border: 1px solid {s.line}; border-radius: 3px; padding: 6px 10px;
-    font-family: '{FAMILY}'; font-size: 13px; selection-background-color: {S500}; selection-color: {G950}; }}
-QLineEdit:focus {{ border-color: {S500}; }}
+QWidget#window QLabel[role="data"] {{ color: {DATA}; }}
+QLineEdit {{ background: {s.field}; color: {s.fg}; border: 1px solid {s.line}; border-radius: {RADIUS}px; padding: 6px 10px;
+    font-family: '{FAMILY}'; font-size: 13.5px; selection-background-color: {S500}; selection-color: {G950}; }}
+QLineEdit:focus {{ border-color: {CYAN}; }}
 QListView, QScrollArea {{ background: transparent; border: none; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
-QScrollBar::handle:vertical {{ background: {scroll_handle}; border-radius: 3px; min-height: 30px; }}
+QScrollBar::handle:vertical {{ background: {G600}; border-radius: 3px; min-height: 30px; }}
 QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page {{ background: none; height: 0; }}
-QFrame#dial {{ background: {s.surface}; border: 1px solid {s.line}; border-radius: 4px; }}
-QFrame#dial QToolButton {{ color: {s.muted}; background: transparent; border: none; border-radius: 3px;
-    padding: 6px 12px; font-family: '{FAMILY}'; font-size: 13px; font-weight: 600; }}
-QFrame#dial QToolButton:hover {{ color: {s.fg}; }}
-QFrame#dial QToolButton:checked {{ background: {s.selected_bg}; color: {s.selected_fg}; }}
-{_BUTTONS}{buttons}
+{_DIAL}{_BUTTONS}
 """

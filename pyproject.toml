@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "klick"
-version = "0.2.0"
+version = "0.3.0"
 description = "Ferramenta de captura de tela: seleciona uma área e escolhe salvar, copiar, OCR ou gravar."
 requires-python = ">=3.11"
 dependencies = [
@@ -21,6 +21,9 @@ dependencies = [
     # Leitura precisa (modelos do PaddleOCR no onnxruntime, offline)
     "rapidocr>=3.4",
     "onnxruntime>=1.20",
+    # Som do computador na gravação (loopback do WASAPI) e o extra de SQL
+    "soundcard>=0.4",
+    "sqlparse>=0.5",
 ]
 
 [project.optional-dependencies]

@@ -13,8 +13,8 @@ from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QCursor, QDesktopServices, QGuiApplication, QImage, QKeySequence
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QMenu, QSystemTrayIcon, QWidget, QWidgetAction
 
-from klick import __version__, config, icons, ocr, theme
-from klick.actions import Action, copy_file, copy_image, copy_text, save_image
+from klick import __version__, config, icons, lens, ocr, theme
+from klick.actions import Action, copy_file, copy_image, copy_text, save_image, store_image
 from klick.capture import Selection, grab_screens
 from klick.editor import EditorWindow
 from klick.history import History
@@ -24,7 +24,8 @@ from klick.icon import app_icon
 from klick.overlay import CaptureSession
 from klick.recorder import Recorder, RecordFormat
 from klick.reader import ReaderWindow
-from klick.recording_ui import RecordingIndicator
+from klick.recording_ui import SOUND_OPTIONS, RecordingIndicator
+from klick.settings_ui import SettingsDialog
 from klick.single import InstanceServer, send_to_running
 from klick.widgets import Toast
 
@@ -50,7 +51,7 @@ class KlickApp(QObject):
         self._history_window: HistoryWindow | None = None
 
         self._recorder = Recorder(self)
-        self._recorder.converting.connect(lambda: self._indicator and self._indicator.set_status("Gerando GIF…"))
+        self._recorder.converting.connect(lambda text: self._indicator and self._indicator.set_status(text))
         self._recorder.finished.connect(self._on_record_finished)
         self._recorder.failed.connect(self._on_record_failed)
         self._indicator: RecordingIndicator | None = None
@@ -76,6 +77,8 @@ class KlickApp(QObject):
             icons.icon("check", theme.S500, size=16) if on else icons.icon("close", theme.G500, size=16))
         keep.toggled.connect(show_state)
         show_state(keep.isChecked())
+        self._keep_action = keep
+        menu.aboutToShow.connect(lambda: keep.setChecked(config.history_enabled()))
         menu.addSeparator()
         self._menu_item(menu, "power", "Sair", None, lambda: self.quit())
         self._menu = menu  # mantém referência viva
@@ -110,11 +113,17 @@ class KlickApp(QObject):
             window.captureRequested.connect(lambda: self.start_capture())
             window.readRequested.connect(lambda image: self._open_reader(image, record=False))
             window.markRequested.connect(lambda image: self._open_editor_image(image))
+            window.settingsRequested.connect(self.show_settings)
             self._history_window = window
         self._history_window.refresh()
         self._history_window.show()
         self._history_window.raise_()
         self._history_window.activateWindow()
+
+    def show_settings(self) -> None:
+        dialog = SettingsDialog(self._history_window)
+        dialog.historyToggled.connect(lambda on: self._history_window and self._history_window.refresh())
+        dialog.exec()
 
     @staticmethod
     def _menu_item(menu: QMenu, icon_name: str, text: str, shortcut: str | None, slot,
@@ -206,6 +215,8 @@ class KlickApp(QObject):
                 self._open_editor(selection)
             elif action is Action.READ:
                 self._open_reader(selection.image)
+            elif action is Action.LENS:
+                lens.search_image(selection.image)
             elif action in (Action.RECORD, Action.GIF):
                 self._start_recording(selection, RecordFormat.GIF if action is Action.GIF else RecordFormat.MP4)
             else:
@@ -218,7 +229,11 @@ class KlickApp(QObject):
         try:
             if action is Action.COPY:
                 copy_image(image)
-                self._show_toast(self._capture_toast("Copiado", f"{image.width()} × {image.height()} · Prints", image))
+                stored = store_image(image) if config.option("autosave") else None
+                where = f"Prints/{stored.name}" if stored else "Prints"
+                if config.option("toasts"):
+                    self._show_toast(self._capture_toast("Copiado", f"{image.width()} × {image.height()} · {where}",
+                                                         image))
             elif action is Action.SAVE:
                 path = save_image(image)
                 if not path:
@@ -274,7 +289,8 @@ class KlickApp(QObject):
 
     def _start_ocr(self, image: QImage) -> None:
         self._ocr_pending = True
-        ocr.recognize_best(image, config.ocr_language()).add_done_callback(
+        recognize = ocr.recognize_best if config.option("precise_ocr") else ocr.recognize
+        recognize(image, config.ocr_language()).add_done_callback(
             lambda future: self._emit_ocr_result(image, future))
 
     def _emit_ocr_result(self, image: QImage, future: Future[str]) -> None:
@@ -304,14 +320,17 @@ class KlickApp(QObject):
     # --- gravação ----------------------------------------------------------
 
     def _start_recording(self, selection: Selection, fmt: RecordFormat) -> None:
-        indicator = RecordingIndicator(selection.logical, self._recorder.elapsed, fmt.value.upper())
+        sound = dict(SOUND_OPTIONS).get(selection.sound, "") if fmt is RecordFormat.MP4 and selection.sound != "none" else ""
+        label = fmt.value.upper() + (f" · {sound.lower()}" if sound else "")
+        indicator = RecordingIndicator(selection.logical, self._recorder.elapsed, label)
         indicator.stopRequested.connect(self._recorder.stop)
         self._indicator = indicator
         # O print da área no instante da seleção vira a miniatura na galeria.
         self._recording = (selection.image, fmt)
 
         def begin() -> None:
-            self._recorder.start(selection.rect, fmt, config.save_dir())
+            folder = config.folder("gifs" if fmt is RecordFormat.GIF else "recordings")
+            self._recorder.start(selection.rect, fmt, folder, selection.quality, selection.sound)
             if self._recorder.recording:
                 indicator.show()
                 self._record_action.setText("Parar gravação")
@@ -333,8 +352,11 @@ class KlickApp(QObject):
             kind = "gif" if fmt is RecordFormat.GIF else "video"
             self._history.add_media(Path(path), kind, frame, self._recorder.last_duration)
             self._recording = None
-        toast = Toast("GIF copiado" if kind == "gif" else "Gravação copiada", f"{Path(path).name} · é só colar", None,
-                      [("folder", "Mostrar na pasta", "folder")])
+        subtitle = f"{Path(path).name} · é só colar"
+        if self._recorder.warning:
+            subtitle += f"\n{self._recorder.warning}: o vídeo ficou sem esse som"
+        toast = Toast("GIF copiado" if kind == "gif" else "Gravação copiada", subtitle, None,
+                      [("folder", "Mostrar na pasta", "folder")], kind="warn" if self._recorder.warning else "ok")
         toast.actionTriggered.connect(lambda key: self._reveal(Path(path)))
         self._show_toast(toast)
         self._maybe_quit()
@@ -357,7 +379,7 @@ class KlickApp(QObject):
 
     def _capture_toast(self, title: str, subtitle: str, image: QImage) -> Toast:
         toast = Toast(title, subtitle, image, [("mark", "Marcar", "mark"), ("read", "Ler o texto", "read"),
-                                               ("save", "Salvar", "save")])
+                                               ("lens", "Pesquisar no Google Lens", "lens"), ("save", "Salvar", "save")])
         toast.actionTriggered.connect(lambda key: self._on_toast_action(key, image))
         return toast
 
@@ -366,6 +388,8 @@ class KlickApp(QObject):
             self._open_editor_image(image)
         elif key == "read":
             self._open_reader(image)
+        elif key == "lens":
+            lens.search_image(image)
         elif key == "save":
             self._deliver(Action.SAVE, image)
 
@@ -455,7 +479,7 @@ def selftest() -> int:
 
     app = QApplication(sys.argv[:1])
     theme.load_fonts()
-    if "Archivo" not in theme.font(13).family():
+    if "Barlow" not in theme.font(13).family():
         return 2
     if icons.pixmap("copy", theme.S500, 18, 1.0).isNull():
         return 3

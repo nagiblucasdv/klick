@@ -20,6 +20,7 @@ class Action(str, Enum):
     EDIT = "edit"
     RECORD = "record"
     GIF = "gif"
+    LENS = "lens"  # pesquisa a imagem no Google Lens, no navegador
 
 
 def copy_image(image: QImage) -> None:
@@ -39,8 +40,8 @@ def copy_file(path: Path) -> None:
 
 
 def save_image(image: QImage) -> Path | None:
-    """Pergunta onde salvar (já sugerindo pasta e nome) e grava. None se cancelado."""
-    directory = config.save_dir()
+    """Pergunta onde salvar (já sugerindo a pasta Prints e o nome) e grava. None se cancelado."""
+    directory = config.folder("prints")
     directory.mkdir(parents=True, exist_ok=True)
     path, _ = QFileDialog.getSaveFileName(
         None,
@@ -55,5 +56,23 @@ def save_image(image: QImage) -> Path | None:
         target = target.with_suffix(".png")
     if not image.save(str(target)):
         raise OSError(f"Não foi possível salvar em {target}")
-    config.set_save_dir(target.parent)
+    return target
+
+
+def store_image(image: QImage, kind: str = "prints") -> Path:
+    """Grava direto na pasta do tipo, sem perguntar (usado pelo "salvar todo print")."""
+    directory = config.folder(kind)
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / config.default_filename()
+    if not image.save(str(target)):
+        raise OSError(f"Não foi possível salvar em {target}")
+    return target
+
+
+def store_text(text: str) -> Path:
+    """Grava o texto lido como .txt na pasta Leitura."""
+    directory = config.folder("reading")
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / config.default_filename(ext="txt")
+    target.write_text(text, encoding="utf-8")
     return target

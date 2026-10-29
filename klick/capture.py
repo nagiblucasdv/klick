@@ -29,6 +29,8 @@ class Selection:
     logical: QRect  # área em coordenadas lógicas globais do Qt (para posicionar janelas)
     screen: QScreen
     marked: bool = False  # a imagem já vem com as marcações feitas na própria captura
+    quality: str = "medium"  # gravação: "low", "medium" ou "high"
+    sound: str = "none"  # gravação: "none", "system", "mic" ou "both"
 
     @property
     def device_pixel_ratio(self) -> float:

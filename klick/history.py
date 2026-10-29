@@ -187,8 +187,11 @@ class History(QObject):
         row = self._db.execute("SELECT * FROM captures WHERE id = ?", (entry_id,)).fetchone()
         return self._entry(row) if row else None
 
-    def delete(self, entry_id: int) -> None:
-        """Tira a captura da galeria. Gravações e GIFs continuam na pasta onde foram salvos."""
+    def delete(self, entry_id: int, remove_file: bool = False) -> None:
+        """Tira a captura da galeria. Com `remove_file`, apaga também o arquivo da gravação ou do GIF;
+        sem, ele continua na pasta onde foi salvo."""
+        if remove_file and (entry := self.get(entry_id)) is not None and entry.media:
+            entry.media.unlink(missing_ok=True)
         with self._db:
             self._db.execute("DELETE FROM captures WHERE id = ?", (entry_id,))
         self._image_path(entry_id).unlink(missing_ok=True)
