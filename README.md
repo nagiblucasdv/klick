@@ -95,6 +95,19 @@ o ffmpeg de verdade, com uma fonte de vídeo sintética no lugar da tela, e são
 | `klick/history.py`, `history_ui.py` | Histórico em SQLite com busca FTS5 e a janela de busca |
 | `klick/hotkeys.py` | Atalhos globais via pynput |
 | `klick/config.py` | Preferências (QSettings) |
+| `klick/single.py` | Instância única: abrir de novo repassa o comando para o Klick que já está na bandeja |
+
+### Instalador
+
+```powershell
+winget install Gyan.FFmpeg.Essentials JRSoftware.InnoSetup
+.\packaging\build.ps1
+```
+
+Gera `dist\Klick-Setup-<versão>.exe`: instala em `%LOCALAPPDATA%\Programs\Klick` sem pedir administrador, com o
+ffmpeg junto, atalho no Menu Iniciar, opção de iniciar com o Windows e de liberar a tecla PrintScreen da Ferramenta de
+Captura. O script cria um venv próprio (`.venv-build`, Python 3.12), roda os testes, o PyInstaller
+([packaging/klick.spec](packaging/klick.spec)) e o Inno Setup ([packaging/klick.iss](packaging/klick.iss)).
 
 Para adicionar uma ação: crie o valor em `Action`, o botão em `Toolbar` e o tratamento em `KlickApp._on_finished`.
 Com `CaptureSession(shots, direct_action=...)` a ação roda assim que o mouse é solto, sem mostrar a barra.

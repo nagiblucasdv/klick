@@ -8,6 +8,7 @@ import sys
 from concurrent.futures import Future
 from pathlib import Path
 
+import shiboken6
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QAction, QImage
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
@@ -23,6 +24,7 @@ from klick.icon import app_icon
 from klick.overlay import CaptureSession
 from klick.recorder import Recorder, RecordFormat
 from klick.recording_ui import RecordingIndicator
+from klick.single import InstanceServer, send_to_running
 
 log = logging.getLogger("klick")
 
@@ -96,6 +98,26 @@ class KlickApp(QObject):
         self._history_window.show()
         self._history_window.raise_()
         self._history_window.activateWindow()
+
+    def handle_command(self, command: str) -> None:
+        """Comando da linha de comando ou repassado por outra instância ("" = só abriu de novo)."""
+        if command == "capture":
+            self.start_capture()
+        elif command == "ocr":
+            self.start_capture(Action.OCR)
+        elif command == "record":
+            self.start_capture(Action.RECORD)
+        elif command == "history":
+            self.show_history()
+        else:
+            self.announce()
+
+    def announce(self) -> None:
+        """Avisa que o Klick está na bandeja; sem isso, abrir pelo Menu Iniciar parece não fazer nada."""
+        key = config.hotkeys()["capture"].replace("<", "").replace(">", "").replace("_", " ").title()
+        if self._tray.isVisible():
+            self._tray.showMessage("Klick está na bandeja", f"Aperte {key} para capturar uma área.",
+                                   app_icon(), 4000)
 
     def quit(self) -> None:
         if self._recorder.recording:
@@ -267,11 +289,16 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--history", action="store_true", help="abre o histórico")
     parser.add_argument("--oneshot", action="store_true",
                         help="faz uma captura e encerra (útil para ligar a um atalho do sistema)")
+    parser.add_argument("--startup", action="store_true", help="aberto junto com o Windows: fica quieto na bandeja")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")
+
+    command = next((name for name in ("capture", "ocr", "record", "history") if getattr(args, name)), "")
+    if args.oneshot:
+        command = command or "capture"
 
     app = QApplication(sys.argv[:1])
     app.setApplicationName("Klick")
@@ -279,18 +306,36 @@ def main(argv: list[str] | None = None) -> int:
     app.setQuitOnLastWindowClosed(False)
     app.setProperty("klick_oneshot", args.oneshot)
 
+    server = None
+    if not args.oneshot:
+        if send_to_running(command):
+            return 0
+        server = InstanceServer(parent=app)
+        if not server.listen():
+            log.warning("Não foi possível garantir instância única")
+
     klick = KlickApp(app)
+    if server is not None:
+        server.received.connect(klick.handle_command)
     if not args.oneshot:
         klick.run()
-    if args.ocr:
-        klick.start_capture(Action.OCR)
-    elif args.record:
-        klick.start_capture(Action.RECORD)
-    elif args.history:
-        klick.show_history()
-    elif args.capture or args.oneshot:
-        klick.start_capture()
-    return app.exec()
+    if command:
+        klick.handle_command(command)
+    elif not args.startup:
+        klick.announce()
+    code = app.exec()
+    destroy_windows(app)
+    return code
+
+
+def destroy_windows(app: QApplication) -> None:
+    """Apaga as janelas antes da QApplication.
+
+    Janelas presas em ciclos de referência só seriam coletadas no fim do interpretador,
+    depois do app, e o processo cairia com access violation ao sair.
+    """
+    for widget in app.topLevelWidgets():
+        shiboken6.delete(widget)
 
 
 if __name__ == "__main__":

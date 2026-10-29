@@ -39,7 +39,15 @@ class RecorderError(RuntimeError):
 
 
 def find_ffmpeg() -> str | None:
-    return config.ffmpeg_path() or shutil.which("ffmpeg")
+    return config.ffmpeg_path() or bundled_ffmpeg() or shutil.which("ffmpeg")
+
+
+def bundled_ffmpeg() -> str | None:
+    """ffmpeg que o instalador coloca ao lado do Klick.exe."""
+    if not getattr(sys, "frozen", False):
+        return None
+    candidate = Path(sys.executable).with_name("ffmpeg.exe")
+    return str(candidate) if candidate.is_file() else None
 
 
 # Em ordem de preferência; hardware (nvenc/amf/qsv) fica de fora porque falha em

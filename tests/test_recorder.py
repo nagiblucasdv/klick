@@ -67,6 +67,7 @@ needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg
 
 def fake_screen(rect, fps, platform=None, display=None):
     # Fonte sintética no lugar da tela: testa o fluxo real do ffmpeg sem precisar de display.
+    rect = even_rect(rect)
     return ["-re", "-f", "lavfi", "-i", f"testsrc=size={rect.width()}x{rect.height()}:rate={fps}"]
 
 
@@ -102,3 +103,14 @@ def test_ffmpeg_crash_is_reported(qapp, monkeypatch, tmp_path):
     assert wait_for(lambda: bool(errors), 10000)
     assert "parou sozinho" in errors[0]
     assert not rec.busy
+
+
+def test_bundled_ffmpeg_next_to_frozen_exe(tmp_path, monkeypatch):
+    (tmp_path / "ffmpeg.exe").write_bytes(b"")
+    monkeypatch.setattr(recorder.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(recorder.sys, "executable", str(tmp_path / "Klick.exe"))
+    assert recorder.bundled_ffmpeg() == str(tmp_path / "ffmpeg.exe")
+
+
+def test_no_bundled_ffmpeg_when_running_from_source():
+    assert recorder.bundled_ffmpeg() is None
