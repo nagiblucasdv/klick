@@ -78,7 +78,7 @@ def done(value: str = "", error: Exception | None = None) -> Future:
 
 
 def test_ocr_result_goes_to_clipboard(qapp, monkeypatch, tmp_path):
-    monkeypatch.setattr(app_module.ocr, "recognize", lambda image, language=None: done("Erro 500\nInternal"))
+    monkeypatch.setattr(app_module.ocr, "recognize_best", lambda image, language=None: done("Erro 500\nInternal"))
     klick = make_app(tmp_path)
     QGuiApplication.clipboard().clear()
     klick._on_finished(Action.OCR, selection())
@@ -87,7 +87,7 @@ def test_ocr_result_goes_to_clipboard(qapp, monkeypatch, tmp_path):
 
 
 def test_ocr_without_text_keeps_clipboard(qapp, monkeypatch, tmp_path):
-    monkeypatch.setattr(app_module.ocr, "recognize", lambda image, language=None: done("  \n"))
+    monkeypatch.setattr(app_module.ocr, "recognize_best", lambda image, language=None: done("  \n"))
     klick = make_app(tmp_path)
     QGuiApplication.clipboard().setText("anterior")
     klick._on_finished(Action.OCR, selection())
@@ -96,7 +96,7 @@ def test_ocr_without_text_keeps_clipboard(qapp, monkeypatch, tmp_path):
 
 
 def test_ocr_error_is_reported(qapp, monkeypatch, tmp_path):
-    monkeypatch.setattr(app_module.ocr, "recognize",
+    monkeypatch.setattr(app_module.ocr, "recognize_best",
                         lambda image, language=None: done(error=OcrError("sem idioma")))
     warnings = []
     klick = make_app(tmp_path)
@@ -110,7 +110,7 @@ def test_ocr_result_from_worker_thread(qapp, monkeypatch, tmp_path):
     from concurrent.futures import ThreadPoolExecutor
 
     pool = ThreadPoolExecutor(max_workers=1)
-    monkeypatch.setattr(app_module.ocr, "recognize",
+    monkeypatch.setattr(app_module.ocr, "recognize_best",
                         lambda image, language=None: pool.submit(lambda: (time.sleep(0.05), "de outra thread")[1]))
     klick = make_app(tmp_path)
     klick._on_finished(Action.OCR, selection())
@@ -120,7 +120,28 @@ def test_ocr_result_from_worker_thread(qapp, monkeypatch, tmp_path):
 
 
 def test_ocr_text_is_stored_in_history(qapp, monkeypatch, tmp_path):
-    monkeypatch.setattr(app_module.ocr, "recognize", lambda image, language=None: done("Atenção: erro 500"))
+    monkeypatch.setattr(app_module.ocr, "recognize_best", lambda image, language=None: done("Atenção: erro 500"))
     klick = make_app(tmp_path)
     klick._on_finished(Action.OCR, selection())
     assert wait_for(lambda: bool(klick._history.search("atencao")), 1000)
+
+
+@pytest.mark.skipif(not __import__("klick.ocr", fromlist=["x"]).precise_available(), reason="RapidOCR não instalado")
+def test_precise_positions_are_in_original_pixels(qapp):
+    from PySide6.QtGui import QColor, QFont, QPainter
+
+    from klick.ocr import recognize_precise
+
+    image = QImage(420, 60, QImage.Format.Format_RGB32)
+    image.fill(QColor("white"))
+    p = QPainter(image)
+    font = QFont("Segoe UI")
+    font.setPixelSize(26)
+    p.setFont(font)
+    p.setPen(QColor("black"))
+    p.drawText(10, 40, "Pedido 48213 faturado")  # rente à borda, como numa seleção apertada
+    p.end()
+    result = recognize_precise(image).result(timeout=180)
+    assert result.text == "Pedido 48213 faturado"
+    first = result.words[0].rect
+    assert 0 <= first.left() <= 20 and 5 <= first.top() <= 25  # sem o deslocamento da margem interna

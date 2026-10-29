@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
 # PyInstaller: gera dist/Klick/Klick.exe (pasta, não arquivo único: abre bem mais rápido).
 # Rode pelo packaging/build.ps1, que gera o ícone antes.
 
@@ -22,11 +24,15 @@ QT_EXCLUDES = [
 a = Analysis(
     [str(ROOT / "klick" / "__main__.py")],
     pathex=[str(ROOT)],
-    datas=[(str(ROOT / "klick" / "assets"), "klick/assets")],  # fontes Archivo e JetBrains Mono
+    # fontes Archivo e JetBrains Mono; modelos e configurações do RapidOCR (baixados pelo build.ps1)
+    datas=[(str(ROOT / "klick" / "assets"), "klick/assets"), *collect_data_files("rapidocr")],
     # pynput escolhe o backend em tempo de execução. Os módulos do winrt usados pelo OCR são achados
     # sozinhos; collect_submodules("winrt") estoura a recursão do modulegraph no Python 3.14.
-    hiddenimports=["pynput.keyboard._win32", "pynput.mouse._win32"],
-    excludes=["tkinter", "unittest", "pydoc", *QT_EXCLUDES],
+    hiddenimports=["pynput.keyboard._win32", "pynput.mouse._win32",
+                   # o RapidOCR escolhe o motor de inferência em tempo de execução; só o onnxruntime vai junto
+                   *collect_submodules("rapidocr", filter=lambda name: not any(
+                       engine in name for engine in ("torch", "paddle", "openvino", "mnn", "tensorrt")))],
+    excludes=["tkinter", "unittest", "pydoc", "torch", "paddle", "openvino", "matplotlib", *QT_EXCLUDES],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

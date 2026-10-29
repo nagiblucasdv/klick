@@ -274,7 +274,7 @@ class KlickApp(QObject):
 
     def _start_ocr(self, image: QImage) -> None:
         self._ocr_pending = True
-        ocr.recognize(image, config.ocr_language()).add_done_callback(
+        ocr.recognize_best(image, config.ocr_language()).add_done_callback(
             lambda future: self._emit_ocr_result(image, future))
 
     def _emit_ocr_result(self, image: QImage, future: Future[str]) -> None:
@@ -402,10 +402,14 @@ def main(argv: list[str] | None = None) -> int:
                         help="faz uma captura e encerra (útil para ligar a um atalho do sistema)")
     parser.add_argument("--startup", action="store_true", help="aberto junto com o Windows: fica quieto na bandeja")
     parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("--selftest", action="store_true", help=argparse.SUPPRESS)  # usado pelo build
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")
+
+    if args.selftest:
+        return selftest()
 
     command = next((name for name in ("capture", "ocr", "record", "history") if getattr(args, name)), "")
     if args.oneshot:
@@ -440,6 +444,40 @@ def main(argv: list[str] | None = None) -> int:
     code = app.exec()
     destroy_windows(app)
     return code
+
+
+def selftest() -> int:
+    """Confere, no executável empacotado, que fontes, ícones e os dois motores de OCR funcionam.
+
+    Sai com 0 se tudo leu o texto de teste; o código de saída diz o que falhou.
+    """
+    from PySide6.QtGui import QColor, QFont, QPainter
+
+    app = QApplication(sys.argv[:1])
+    theme.load_fonts()
+    if "Archivo" not in theme.font(13).family():
+        return 2
+    if icons.pixmap("copy", theme.S500, 18, 1.0).isNull():
+        return 3
+    image = QImage(560, 90, QImage.Format.Format_RGB32)
+    image.fill(QColor("#ffffff"))
+    p = QPainter(image)
+    f = QFont("Segoe UI")
+    f.setPixelSize(30)
+    p.setFont(f)
+    p.setPen(QColor("#111111"))
+    p.drawText(16, 58, "Pedido 48213 faturado")
+    p.end()
+    try:
+        fast = ocr.recognize_words(image).result(timeout=60).text
+        precise = ocr.recognize_precise(image).result(timeout=180).text
+    except Exception:  # noqa: BLE001
+        log.exception("selftest")
+        return 4
+    finally:
+        app.processEvents()
+    print(f"rápido: {fast!r} | preciso: {precise!r}")
+    return 0 if "48213" in fast and "48213" in precise else 5
 
 
 def destroy_windows(app: QApplication) -> None:

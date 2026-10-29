@@ -149,3 +149,91 @@ def _submit(func, image: QImage, language: str | None) -> Future:
         return future
     # copy(): a QImage não pode ser compartilhada com a thread enquanto o Qt a usa.
     return _executor().submit(func, image.copy(), language)
+
+
+# --- leitura precisa (RapidOCR) ----------------------------------------------
+#
+# Modelos do PaddleOCR rodando no onnxruntime, offline. Bem mais preciso que o motor do
+# Windows em texto colorido ou sobre fundo carregado (prints de jogo, telas com imagem),
+# mas leva de 1 a 4 s. Por isso a leitura mostra primeiro o resultado do Windows e troca
+# por este quando ele chega.
+
+def precise_available() -> bool:
+    try:
+        import onnxruntime  # noqa: F401
+        import rapidocr  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+@cache
+def _precise_executor() -> ThreadPoolExecutor:
+    return ThreadPoolExecutor(max_workers=1, thread_name_prefix="klick-ocr-precise")
+
+
+@cache
+def _rapid():
+    from rapidocr import RapidOCR
+
+    return RapidOCR(params={"Global.log_level": "warning"})
+
+
+PRECISE_PAD = 32  # a seleção corta o texto rente à borda, onde o detector erra; uma margem resolve
+
+
+def _with_margin(image: QImage, margin: int) -> QImage:
+    from PySide6.QtGui import QPainter
+
+    out = QImage(image.width() + 2 * margin, image.height() + 2 * margin, QImage.Format.Format_RGB32)
+    out.fill(image.pixelColor(0, 0))  # a cor do canto costuma ser a do fundo
+    p = QPainter(out)
+    p.drawImage(margin, margin, image)
+    p.end()
+    return out
+
+
+def _recognize_precise(image: QImage) -> OcrResult:
+    import numpy as np
+
+    pad = PRECISE_PAD
+    rgb = _with_margin(image, pad).convertToFormat(QImage.Format.Format_BGR888)  # o RapidOCR espera BGR
+    array = np.frombuffer(rgb.constBits(), np.uint8).reshape(rgb.height(), rgb.bytesPerLine())
+    array = array[:, :rgb.width() * 3].reshape(rgb.height(), rgb.width(), 3).copy()
+    out = _rapid()(array, return_word_box=True)
+    if not out.txts:
+        return OcrResult(language="RapidOCR")
+    words = []
+    for index, line in enumerate(out.word_results or ()):
+        for text, _score, box in line:
+            xs, ys = [pt[0] for pt in box], [pt[1] for pt in box]
+            words.append(Word(text, QRectF(min(xs) - pad, min(ys) - pad, max(xs) - min(xs), max(ys) - min(ys)),
+                              index))
+    return OcrResult(tuple(words), "RapidOCR", tuple(out.txts))
+
+
+def recognize_precise(image: QImage) -> Future[OcrResult]:
+    """Leitura precisa com posição das palavras. Sem RapidOCR instalado, o Future falha com OcrError."""
+    if not precise_available():
+        future: Future[OcrResult] = Future()
+        future.set_exception(OcrError("Leitura precisa indisponível (RapidOCR não instalado)."))
+        return future
+    return _precise_executor().submit(_recognize_precise, image.copy())
+
+
+def recognize_best(image: QImage, language: str | None = None) -> Future[str]:
+    """Texto pelo motor mais preciso disponível (usado pelo OCR direto, Ctrl+Shift+T)."""
+    if not precise_available():
+        return recognize(image, language)
+    outer: Future[str] = Future()
+
+    def done(future: Future) -> None:
+        try:
+            outer.set_result(future.result().text)
+        except Exception:  # noqa: BLE001 - se o preciso falhar, o do Windows ainda serve
+            fallback = recognize(image, language)
+            fallback.add_done_callback(
+                lambda f: outer.set_exception(f.exception()) if f.exception() else outer.set_result(f.result()))
+
+    recognize_precise(image).add_done_callback(done)
+    return outer

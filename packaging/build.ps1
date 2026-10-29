@@ -58,6 +58,11 @@ try {
         Check "pytest"
     }
 
+    Step "Modelos do RapidOCR"
+    # Baixa os modelos para dentro do pacote rapidocr; o PyInstaller leva junto e o app nunca baixa nada.
+    & $python -c "from rapidocr import RapidOCR; RapidOCR(params={'Global.log_level': 'warning'})"
+    Check "RapidOCR"
+
     Step "Ícone e versão"
     $version = (& $python packaging\prepare.py $build | Select-Object -Last 1).Trim()
     Check "prepare.py"
@@ -70,6 +75,11 @@ try {
     & $python -m PyInstaller packaging\klick.spec --noconfirm --clean --log-level WARN `
         --distpath dist --workpath (Join-Path $build "pyinstaller")
     Check "PyInstaller"
+
+    Step "Autoteste do executável"
+    # Confere dentro do Klick.exe empacotado: fontes, ícones e os dois motores de leitura.
+    $selftest = Start-Process (Join-Path $root "dist\Klick\Klick.exe") -ArgumentList "--selftest" -Wait -PassThru
+    if ($selftest.ExitCode -ne 0) { throw "Autoteste do executável falhou (código $($selftest.ExitCode))" }
 
     Step "Inno Setup"
     & $iscc /Q "/DAppVersion=$version" packaging\klick.iss
