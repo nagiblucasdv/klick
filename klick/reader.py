@@ -16,9 +16,9 @@ from concurrent.futures import Future
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, QVariantAnimation, Signal
 from PySide6.QtGui import (QColor, QGuiApplication, QImage, QKeySequence, QPainter, QPainterPath, QPen, QShortcut,
                            QTextCursor)
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenu, QPlainTextEdit, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPlainTextEdit, QSizePolicy, QVBoxLayout, QWidget
 
-from klick import config, icons, lens, ocr, sql, theme
+from klick import config, lens, ocr, sql, theme
 from klick.actions import copy_text, store_text
 from klick.icon import app_icon
 from klick.ocr import OcrResult
@@ -245,8 +245,6 @@ class ReaderWindow(QWidget):
         self._offsets: list[tuple[int, int]] = []
         self._image = image
         self._dark = scheme.dark
-        self._highlighter: sql.SqlHighlighter | None = None
-        self._plain = ""  # texto do painel antes de virar SQL formatado
 
         screen = QGuiApplication.primaryScreen().availableGeometry()
         ratio = QGuiApplication.primaryScreen().devicePixelRatio()
@@ -284,21 +282,20 @@ class ReaderWindow(QWidget):
         side_title = QLabel("Texto reconhecido")
         side_title.setFont(theme.font(13, 650))
         self.sql_toggle = button("SQL", "ghost", "sql")
-        self.sql_toggle.setCheckable(True)
-        self.sql_toggle.setToolTip("Consertar e formatar como SQL")
-        self.sql_toggle.toggled.connect(self._toggle_sql)
+        self.sql_toggle.setToolTip("Abrir a consulta na janela de SQL")
+        self.sql_toggle.clicked.connect(lambda: self._open_sql("query"))
         self.sql_toggle.hide()
         self.table = button("Tabela", "ghost", "table")
-        self.table.setToolTip("Copiar a grade do print para o Excel, CSV ou INSERT")
-        self.table.clicked.connect(self._table_menu)
+        self.table.setToolTip("Abrir a grade na janela de SQL: Excel, CSV, INSERT ou UPDATE")
+        self.table.clicked.connect(lambda: self._open_sql("table"))
         self.table.hide()
-        self._rows: list[list[str]] = []
+        self._sql_windows: list = []
         title_row = QHBoxLayout()
         title_row.addWidget(side_title)
         title_row.addStretch(1)
         title_row.addWidget(self.table)
         title_row.addWidget(self.sql_toggle)
-        self.side_hint = side_hint = QLabel("Dá para corrigir aqui antes de copiar")
+        side_hint = QLabel("Dá para corrigir aqui antes de copiar")
         side_hint.setProperty("role", "muted")
         side_hint.setFont(theme.font(12))
         self.text = QPlainTextEdit()
@@ -398,7 +395,6 @@ class ReaderWindow(QWidget):
             return  # o preciso não achou nada onde o rápido achou: fica o rápido
 
         self.view.set_result(result)
-        self.sql_toggle.setChecked(False)
         self._fill_text(result)
         self._update_status()
         self.copy_all.setEnabled(bool(result.words))
@@ -406,8 +402,7 @@ class ReaderWindow(QWidget):
         self.save_txt.setEnabled(bool(result.words))
         addon = config.option("addon_sql")
         self.sql_toggle.setVisible(addon and sql.looks_like_sql(result.text))
-        self._rows = sql.table_rows(result.words) if addon else []
-        self.table.setVisible(sql.looks_like_table(self._rows))
+        self.table.setVisible(addon and sql.looks_like_table(sql.table_rows(result.words)))
         if self._precise_done:
             self.recognized.emit(result)
 
@@ -486,46 +481,15 @@ class ReaderWindow(QWidget):
         self.copy_sel.setEnabled(bool(text))
         self.picked.setText(f"Selecionado: {text}" if text else "Nada selecionado ainda")
 
-    def _toggle_sql(self, on: bool) -> None:
-        """Mostra o texto como SQL consertado e formatado (ou volta ao texto lido)."""
-        self._syncing = True
-        if on:
-            self._plain = self.text.toPlainText()
-            self._highlighter = sql.SqlHighlighter(self.text.document(), self._dark)
-            formatted = sql.tidy(self._plain)
-            self.text.setPlainText(formatted)
-            found = sql.tables(formatted)
-            self.side_hint.setText(f"Tabelas: {', '.join(found)}" if found else "SQL formatado")
-            self.text.setFont(theme.font(12.5, 450, mono=True))
-        else:
-            if self._highlighter is not None:
-                self._highlighter.setDocument(None)
-                self._highlighter = None
-            if self._plain:
-                self.text.setPlainText(self._plain)
-            self.side_hint.setText("Dá para corrigir aqui antes de copiar")
-            self.text.setFont(theme.font(13.5, 450))
-        self._syncing = False
-        self._edited = on  # o SQL formatado não casa mais com as palavras da imagem
+    def _open_sql(self, tab: str) -> None:
+        from klick.sql_ui import SqlWindow
 
-    def _table_menu(self) -> None:
-        rows = self._rows
-        size = f"{len(rows)} linhas × {len(rows[0])} colunas" if rows else ""
-        menu = QMenu(self)
-        head = menu.addAction(size)
-        head.setEnabled(False)
-        menu.addAction(icons.icon("table", theme.A300, size=16), "Copiar para o Excel",
-                       lambda: self._copy_table(sql.to_tsv(rows), "Tabela copiada: é só colar no Excel"))
-        menu.addAction(icons.icon("copy", theme.A300, size=16), "Copiar como CSV",
-                       lambda: self._copy_table(sql.to_csv(rows), "CSV copiado"))
-        menu.addAction(icons.icon("sql", theme.A300, size=16), "Copiar como INSERT",
-                       lambda: self._copy_table(sql.to_insert(rows), "INSERTs copiados (troque \"tabela\" pelo nome certo)"))
-        menu.exec(self.table.mapToGlobal(self.table.rect().bottomLeft()))
-
-    def _copy_table(self, text: str, message: str) -> None:
-        if text:
-            copy_text(text)
-            self.picked.setText(message)
+        window = SqlWindow(self._image, self.view.result, tab)
+        window.destroyed.connect(lambda: window in self._sql_windows and self._sql_windows.remove(window))
+        self._sql_windows.append(window)
+        window.show()
+        window.raise_()
+        window.activateWindow()
 
     def _save_text(self) -> None:
         text = self.text.toPlainText()

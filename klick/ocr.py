@@ -193,13 +193,31 @@ def _with_margin(image: QImage, margin: int) -> QImage:
     return out
 
 
-def _recognize_precise(image: QImage) -> OcrResult:
+PRECISE_UPSCALE_MAX = 2400  # modo código: prints até essa largura/altura (já dobrada) são lidos ampliados 2x
+DARK_LUMA = 110  # modo código: fundo mais escuro que isso (editor em tema escuro) é invertido antes de ler
+
+
+def _bgr_array(image: QImage):
     import numpy as np
 
-    pad = PRECISE_PAD
-    rgb = _with_margin(image, pad).convertToFormat(QImage.Format.Format_BGR888)  # o RapidOCR espera BGR
+    rgb = image.convertToFormat(QImage.Format.Format_BGR888)  # o RapidOCR espera BGR
     array = np.frombuffer(rgb.constBits(), np.uint8).reshape(rgb.height(), rgb.bytesPerLine())
-    array = array[:, :rgb.width() * 3].reshape(rgb.height(), rgb.width(), 3).copy()
+    return array[:, :rgb.width() * 3].reshape(rgb.height(), rgb.width(), 3).copy()
+
+
+def _recognize_precise(image: QImage, code: bool = False) -> OcrResult:
+    # Modo código (janela de SQL): o RapidOCR erra linhas longas de texto claro sobre fundo
+    # escuro em fonte pequena, como num editor. Ampliado 2x e com as cores invertidas ele lê
+    # certo; as posições voltam à escala original. Em texto comum (páginas, jogos) ampliar
+    # junta palavras, então a leitura normal não usa.
+    scale = 2 if code and max(image.width(), image.height()) * 2 <= PRECISE_UPSCALE_MAX else 1
+    if scale > 1:
+        image = image.scaled(image.width() * scale, image.height() * scale, Qt.AspectRatioMode.IgnoreAspectRatio,
+                             Qt.TransformationMode.SmoothTransformation)
+    pad = PRECISE_PAD * scale
+    array = _bgr_array(_with_margin(image, pad))
+    if code and array.mean() < DARK_LUMA:
+        array = 255 - array
     out = _rapid()(array, return_word_box=True)
     if not out.txts:
         return OcrResult(language="RapidOCR")
@@ -207,18 +225,20 @@ def _recognize_precise(image: QImage) -> OcrResult:
     for index, line in enumerate(out.word_results or ()):
         for text, _score, box in line:
             xs, ys = [pt[0] for pt in box], [pt[1] for pt in box]
-            words.append(Word(text, QRectF(min(xs) - pad, min(ys) - pad, max(xs) - min(xs), max(ys) - min(ys)),
-                              index))
+            words.append(Word(text, QRectF((min(xs) - pad) / scale, (min(ys) - pad) / scale,
+                                           (max(xs) - min(xs)) / scale, (max(ys) - min(ys)) / scale), index))
     return OcrResult(tuple(words), "RapidOCR", tuple(out.txts))
 
 
-def recognize_precise(image: QImage) -> Future[OcrResult]:
-    """Leitura precisa com posição das palavras. Sem RapidOCR instalado, o Future falha com OcrError."""
+def recognize_precise(image: QImage, code: bool = False) -> Future[OcrResult]:
+    """Leitura precisa com posição das palavras. `code` ajusta para print de código (SQL, editor).
+
+    Sem RapidOCR instalado, o Future falha com OcrError."""
     if not precise_available():
         future: Future[OcrResult] = Future()
         future.set_exception(OcrError("Leitura precisa indisponível (RapidOCR não instalado)."))
         return future
-    return _precise_executor().submit(_recognize_precise, image.copy())
+    return _precise_executor().submit(_recognize_precise, image.copy(), code)
 
 
 def recognize_best(image: QImage, language: str | None = None) -> Future[str]:

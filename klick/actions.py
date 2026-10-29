@@ -21,6 +21,7 @@ class Action(str, Enum):
     RECORD = "record"
     GIF = "gif"
     LENS = "lens"  # pesquisa a imagem no Google Lens, no navegador
+    SQL = "sql"  # abre a janela de SQL (consulta ou grade de resultado)
 
 
 def copy_image(image: QImage) -> None:
@@ -69,10 +70,10 @@ def store_image(image: QImage, kind: str = "prints") -> Path:
     return target
 
 
-def store_text(text: str) -> Path:
-    """Grava o texto lido como .txt na pasta Leitura."""
+def store_text(text: str, ext: str = "txt") -> Path:
+    """Grava o texto lido na pasta Leitura (.txt, ou .sql/.csv vindo da janela de SQL)."""
     directory = config.folder("reading")
     directory.mkdir(parents=True, exist_ok=True)
-    target = directory / config.default_filename(ext="txt")
+    target = directory / config.default_filename(ext=ext)
     target.write_text(text, encoding="utf-8")
     return target

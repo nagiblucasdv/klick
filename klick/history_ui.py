@@ -213,6 +213,7 @@ class HistoryWindow(QWidget):
     readRequested = Signal(QImage)
     markRequested = Signal(QImage)
     settingsRequested = Signal()
+    sqlRequested = Signal(QImage)
 
     def __init__(self, history: History):
         super().__init__(None, Qt.WindowType.Window)
@@ -502,6 +503,7 @@ class HistoryWindow(QWidget):
             add("copy", "Copiar imagem", lambda: self._copy(entry), "Ctrl+C")
             add("read", "Abrir na leitura", lambda: self.readRequested.emit(image()))
             add("mark", "Marcar", lambda: self.markRequested.emit(image()))
+            add("sql", "Abrir no SQL", lambda: self.sqlRequested.emit(image()))
             copy_txt = add("text", "Copiar texto", lambda: copy_text(entry.text))
             copy_txt.setEnabled(bool(entry.text.strip()))
             add("lens", "Pesquisar no Google Lens", lambda: lens.search_image(image()))

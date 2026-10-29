@@ -14,6 +14,7 @@ Aperte **PrintScreen** (ou clique no ícone da bandeja), arraste a área e escol
 | Marcar | `Ctrl+E` | Marca o print ali mesmo, sem abrir janela (ferramentas abaixo) |
 | Salvar | `Ctrl+S` | Salva PNG/JPG (sugere `Imagens/Klick/Prints/klick_<data>.png`) |
 | Pesquisar | `Ctrl+L` | Pesquisa a imagem no Google Lens, no navegador padrão |
+| SQL | `Ctrl+Q` | Abre a janela de SQL: consulta formatada ou grade em Excel, CSV, INSERT e UPDATE |
 | Gravar | `Ctrl+R` | Grava a área em MP4, com ou sem som |
 | GIF | `Ctrl+G` | Grava a área em GIF, para colar em chat ou ticket |
 
@@ -48,12 +49,21 @@ botão de pasta abre a pasta da coleção: `Prints/`, `Gravações/`, `GIFs/` e 
 histórico fica em `%LOCALAPPDATA%\Klick\history` (as últimas 1000 capturas).
 
 **Leitura:** além de copiar, `Pesquisar` busca o trecho no Google, `Google Lens` pesquisa a imagem e `Salvar .txt`
-grava o texto em `Leitura/`. O extra **SQL e tabelas** vem ligado:
+grava o texto em `Leitura/`.
 
-- Texto que parece consulta ganha o botão **SQL**: conserta trocas típicas do OCR (`FR0M`, aspas curvas), formata uma
-  cláusula por linha, colore e lista as tabelas citadas.
-- Print de uma grade de resultado (SSMS, DBeaver, planilha) ganha o botão **Tabela**: copia para o Excel (colunas
-  separadas), como CSV (`;`) ou como `INSERT INTO tabela (...)`, com a primeira linha virando o nome das colunas.
+**SQL:** janela própria para consulta e grade de resultado lidas de um print. Abre com `Ctrl+Q` na seleção, por "Ler
+SQL ou tabela" no menu da bandeja, por "Abrir no SQL" na galeria ou pelos botões SQL e Tabela da leitura. Lê com os
+dois motores (o RapidOCR ampliado e com as cores invertidas em fundo escuro, como num editor) e fica com a leitura mais
+limpa.
+
+- **Consulta:** o SQL consertado (`FR0M`, aspas curvas, `c. codcli`), formatado e colorido, editável; ao lado o tipo
+  (SELECT, UPDATE…), as tabelas citadas e o print. "Formatar" refaz, "Texto lido" volta ao original.
+- **Tabela:** a grade lida, editável (`Del` apaga linhas), com o nome da tabela, "primeira linha é o cabeçalho" e
+  "vírgula decimal" (1.240,50 vira 1240.50). Copia como Excel, CSV (`;`), `INSERT` ou `UPDATE` (escolhendo a coluna do
+  `WHERE`), com prévia ao vivo. "Salvar arquivo" grava `.sql`, `.csv` ou `.txt` em `Leitura/`.
+
+O extra **SQL e tabelas** (ligado por padrão) mostra os botões SQL e Tabela na leitura quando o texto parece consulta
+ou grade.
 
 **Configurações** (engrenagem na galeria): lupa de pixels, guias de terço, aviso depois de copiar, salvar todo print
 na pasta, leitura precisa, perguntar antes de gravar e o som/qualidade padrão, pasta do Klick, guardar histórico,
@@ -103,7 +113,8 @@ o ffmpeg de verdade, com uma fonte de vídeo sintética no lugar da tela, e são
 | `klick/editor.py` | Ferramentas de marcar (`Marker`), usadas na captura e na janela de marcar |
 | `klick/reader.py` | Leitura estilo Lens: palavras com posição, seleção por arraste |
 | `klick/lens.py` | Pesquisa no Google Lens (página local que envia a imagem) e no Google |
-| `klick/sql.py` | Extra Leitura de SQL: detecta, conserta, formata e colore |
+| `klick/sql.py` | SQL e tabelas: detecta, conserta, formata, colore e monta a grade (Excel, CSV, INSERT, UPDATE) |
+| `klick/sql_ui.py` | Janela de SQL (abas Consulta e Tabela) |
 | `klick/audio.py` | Som do computador na gravação (loopback do WASAPI) |
 | `klick/settings_ui.py` | Tela de configurações |
 | `klick/theme.py`, `icons.py`, `widgets.py` | Identidade Visor: cores, fontes, ícones, botões, aviso e confirmação |

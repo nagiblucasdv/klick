@@ -26,6 +26,7 @@ from klick.recorder import Recorder, RecordFormat
 from klick.reader import ReaderWindow
 from klick.recording_ui import SOUND_OPTIONS, RecordingIndicator
 from klick.settings_ui import SettingsDialog
+from klick.sql_ui import SqlWindow
 from klick.single import InstanceServer, send_to_running
 from klick.widgets import Toast
 
@@ -64,6 +65,7 @@ class KlickApp(QObject):
         menu.addAction(self._menu_header(menu))
         self._menu_item(menu, "spot", "Capturar área", "Print", lambda: self.start_capture())
         self._menu_item(menu, "read", "Ler texto", "Ctrl+Shift+T", lambda: self.start_capture(Action.OCR))
+        self._menu_item(menu, "sql", "Ler SQL ou tabela", None, lambda: self.start_capture(Action.SQL))
         self._record_action = self._menu_item(menu, "rec", "Gravar área", "Ctrl+Shift+R",
                                               lambda: self.toggle_recording(), color=theme.REC)
         menu.addSeparator()
@@ -113,6 +115,7 @@ class KlickApp(QObject):
             window.captureRequested.connect(lambda: self.start_capture())
             window.readRequested.connect(lambda image: self._open_reader(image, record=False))
             window.markRequested.connect(lambda image: self._open_editor_image(image))
+            window.sqlRequested.connect(lambda image: self._open_sql(image, record=False))
             window.settingsRequested.connect(self.show_settings)
             self._history_window = window
         self._history_window.refresh()
@@ -217,6 +220,8 @@ class KlickApp(QObject):
                 self._open_reader(selection.image)
             elif action is Action.LENS:
                 lens.search_image(selection.image)
+            elif action is Action.SQL:
+                self._open_sql(selection.image)
             elif action in (Action.RECORD, Action.GIF):
                 self._start_recording(selection, RecordFormat.GIF if action is Action.GIF else RecordFormat.MP4)
             else:
@@ -279,6 +284,18 @@ class KlickApp(QObject):
         reader.raise_()
         reader.activateWindow()
         return reader
+
+    def _open_sql(self, image: QImage, record: bool = True) -> SqlWindow:
+        """Janela de SQL. Da captura, o que foi lido vai para a coleção Leitura."""
+        window = SqlWindow(image)
+        if record:
+            window.recognized.connect(lambda result: self._history.add(image, Action.OCR.value, text=result.text))
+        window.destroyed.connect(lambda: self._on_reader_closed(window))
+        self._readers.append(window)
+        window.show()
+        window.raise_()
+        window.activateWindow()
+        return window
 
     def _on_reader_closed(self, reader: ReaderWindow) -> None:
         if reader in self._readers:
@@ -510,8 +527,11 @@ def destroy_windows(app: QApplication) -> None:
     Janelas presas em ciclos de referência só seriam coletadas no fim do interpretador,
     depois do app, e o processo cairia com access violation ao sair.
     """
-    for widget in app.topLevelWidgets():
-        shiboken6.delete(widget)
+    # Só as janelas sem dono: popups (como a lista de um QComboBox) também são "top level",
+    # mas morrem com o dono; apagar os dois derruba o processo.
+    for widget in [w for w in app.topLevelWidgets() if w.parent() is None]:
+        if shiboken6.isValid(widget):
+            shiboken6.delete(widget)
 
 
 if __name__ == "__main__":

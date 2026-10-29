@@ -40,6 +40,7 @@ OCR_FIXES = [
     (r"\bGR0UP\b", "GROUP"),
     (r"\bJ0IN\b", "JOIN"),
     (r"\s*;\s*$", ";"),
+    (r"\b([A-Za-z_]\w*)\. (\w)", r"\1.\2"),  # "c. codcli" (OCR do Windows) -> "c.codcli"
 ]
 
 
@@ -178,19 +179,74 @@ def _column(name: str, index: int) -> str:
     return plain if plain and not plain[0].isdigit() else f"coluna{index + 1}"
 
 
-def _literal(value: str) -> str:
+def _literal(value: str, comma_decimal: bool = False) -> str:
+    """Valor SQL: número sem aspas, vazio vira NULL, texto entre aspas (apóstrofo dobrado).
+
+    Com `comma_decimal`, número no formato brasileiro (1.240,50) vira 1240.50.
+    """
     value = value.strip()
     if not value or value.upper() == "NULL":
         return "NULL"
-    if re.fullmatch(r"-?\d+(\.\d+)?", value):
+    if re.fullmatch(r"-?\d+(\.\d+)?", value) and not (comma_decimal and re.fullmatch(r"-?\d{1,3}(\.\d{3})+", value)):
         return value
+    if comma_decimal and re.fullmatch(r"-?(\d{1,3}(\.\d{3})+|\d+)(,\d+)?", value):
+        return value.replace(".", "").replace(",", ".")
     return "'" + value.replace("'", "''") + "'"
 
 
-def to_insert(rows: list[list[str]], table: str = "tabela") -> str:
-    """A primeira linha vira o nome das colunas; cada linha seguinte, um INSERT."""
-    if len(rows) < 2:
+def columns(rows: list[list[str]], header: bool = True) -> list[str]:
+    """Nomes das colunas: a primeira linha (limpa) ou coluna1, coluna2…"""
+    if not rows:
+        return []
+    if header:
+        return [_column(c, i) for i, c in enumerate(rows[0])]
+    return [f"coluna{i + 1}" for i in range(len(rows[0]))]
+
+
+def _data(rows: list[list[str]], header: bool) -> list[list[str]]:
+    return [r for r in (rows[1:] if header else rows) if any(v.strip() for v in r)]
+
+
+def to_insert(rows: list[list[str]], table: str = "tabela", header: bool = True, comma_decimal: bool = False) -> str:
+    """Um INSERT por linha. Com `header`, a primeira linha vira o nome das colunas."""
+    names = ", ".join(columns(rows, header))
+    table = table.strip() or "tabela"
+    return "\n".join(f"INSERT INTO {table} ({names}) VALUES ({', '.join(_literal(v, comma_decimal) for v in r)});"
+                     for r in _data(rows, header))
+
+
+def to_update(rows: list[list[str]], table: str = "tabela", key: int = 0, header: bool = True,
+              comma_decimal: bool = False) -> str:
+    """Um UPDATE por linha: as outras colunas no SET e a coluna `key` no WHERE."""
+    names = columns(rows, header)
+    if not names or key >= len(names):
         return ""
-    columns = ", ".join(_column(c, i) for i, c in enumerate(rows[0]))
-    return "\n".join(f"INSERT INTO {table} ({columns}) VALUES ({', '.join(_literal(v) for v in r)});"
-                     for r in rows[1:] if any(r))
+    table = table.strip() or "tabela"
+    out = []
+    for r in _data(rows, header):
+        sets = ", ".join(f"{n} = {_literal(v, comma_decimal)}" for i, (n, v) in enumerate(zip(names, r)) if i != key)
+        out.append(f"UPDATE {table} SET {sets} WHERE {names[key]} = {_literal(r[key], comma_decimal)};")
+    return "\n".join(out)
+
+
+def kind(text: str) -> str:
+    """Tipo da consulta pela primeira palavra-chave: SELECT, UPDATE, INSERT, DELETE, CREATE…"""
+    match = re.search(r"\b(select|update|insert|delete|create|alter|drop|with)\b", text, flags=re.IGNORECASE)
+    return match.group(1).upper() if match else ""
+
+
+_ALNUM = re.compile(r"[0-9A-Za-zÀ-ÿ]{2,}")
+_SYMBOLS = {"=", "*", ",", "(", ")", ">", "<", ">=", "<=", "<>", "!=", "-", "+", "/", ";", "."}
+
+
+def reading_score(text: str) -> int:
+    """Quão limpa parece uma leitura de código: letras e números em palavras de verdade,
+    menos uma multa por pedaço que é só sujeira (".o--.", "o", "d d"). Para escolher
+    entre o OCR do Windows e o RapidOCR."""
+    score = 0
+    for token in text.split():
+        if _ALNUM.search(token):
+            score += sum(ch.isalnum() for ch in token)
+        elif token not in _SYMBOLS:
+            score -= 4
+    return score

@@ -27,11 +27,13 @@ CTRL_KEYS = {
     Qt.Key.Key_R: Action.RECORD,
     Qt.Key.Key_G: Action.GIF,
     Qt.Key.Key_L: Action.LENS,
+    Qt.Key.Key_Q: Action.SQL,
 }
 HINTS = {
     Action.OCR: "Selecione o texto",
     Action.RECORD: "Selecione a área para gravar",
     Action.GIF: "Selecione a área para gravar em GIF",
+    Action.SQL: "Selecione a consulta ou a tabela",
 }
 
 # (ação, ícone, rótulo, tooltip, atalho); None separa grupos
