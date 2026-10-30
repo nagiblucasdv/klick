@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEasingCurve, QPointF, QRectF, QSize, Qt, QVariantAnimation, Signal
-from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPainterPath, QPen, QPixmap, QScreen
+from PySide6.QtGui import (QColor, QGuiApplication, QImage, QPainter, QPainterPath, QPen, QPixmap,
+                           QRadialGradient, QScreen)
 from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QDialog, QFrame, QHBoxLayout, QLabel, QPushButton,
                                QSizePolicy, QToolButton, QVBoxLayout, QWidget)
 
@@ -37,6 +38,35 @@ def icon_button(name: str, label: str, shortcut: str | None = None, size: int = 
     b.setCursor(Qt.CursorShape.PointingHandCursor)
     b.setAutoRaise(True)
     return b
+
+
+def paint_mist(p: QPainter, rect: QRectF) -> None:
+    """Fundo das janelas: a página areia com três brumas (verde-petróleo, menta e areia) bem espalhadas."""
+    p.fillRect(rect, QColor(theme.G950))
+    teal, mint, sand = theme.MIST
+    for color, cx, cy, radius in ((teal, 0.08, 0.0, 0.75), (mint, 0.95, 1.0, 0.8), (sand, 0.9, 0.05, 0.6)):
+        g = QRadialGradient(rect.left() + rect.width() * cx, rect.top() + rect.height() * cy,
+                            max(rect.width(), rect.height()) * radius)
+        g.setColorAt(0, color)
+        g.setColorAt(1, QColor(color.red(), color.green(), color.blue(), 0))
+        p.fillRect(rect, g)
+
+
+class GlassPanel(QFrame):
+    """Painel de vidro sobre a névoa: branco translúcido, borda clara e uma sombra bem leve."""
+
+    def paintEvent(self, event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect()).adjusted(1, 1, -1, -3)
+        shadow = QPainterPath()
+        shadow.addRoundedRect(r.adjusted(0, 3, 0, 3), theme.WINDOW_RADIUS + 4, theme.WINDOW_RADIUS + 4)
+        p.fillPath(shadow, QColor(30, 27, 24, 14))
+        path = QPainterPath()
+        path.addRoundedRect(r, theme.WINDOW_RADIUS + 4, theme.WINDOW_RADIUS + 4)
+        p.fillPath(path, theme.PANE)
+        p.setPen(QPen(theme.GLASS_LINE, 1))
+        p.drawPath(path)
 
 
 def thumbnail(image: QImage, width: int, height: int) -> QPixmap:

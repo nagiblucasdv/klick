@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "klick"
-version = "0.4.0"
+version = "0.4.1"
 authors = [{ name = "Lucas Nagib" }]
 description = "Ferramenta de captura de tela: seleciona uma área e escolhe salvar, copiar, OCR ou gravar."
 requires-python = ">=3.11"
@@ -35,9 +35,6 @@ klick = "klick.app:main"
 
 [tool.setuptools.packages.find]
 include = ["klick*"]
-
-[tool.setuptools.package-data]
-klick = ["assets/fonts/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

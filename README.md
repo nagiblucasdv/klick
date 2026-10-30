@@ -44,12 +44,11 @@ e gravações e GIFs vão para a pasta. O que está só na galeria some depois d
 na pasta (`Ctrl+S` na galeria, ou "Guardar" no aviso) tira do prazo: o print vira PNG em `Prints/`, a leitura vira `.txt`
 em `Leitura/` e a gravação sai da pasta interna da galeria para `Gravações/` ou `GIFs/`.
 
-**Galeria:** coleções Tudo, Prints, Gravações, GIFs, Leituras e Análises, com o selo "some em N dias" ou "na pasta" em
-cada cartão e o filtro "só na galeria". A busca procura no texto que aparecia no print ("erro 500", "atencao" acha
-"Atenção"). `Enter` copia de novo (gravações e GIFs vão como arquivo); em Leituras e Análises, abre o texto. `Ctrl+K`
-abre a paleta de comandos: capturar, gravar, ler, ir para uma coleção, guardar, configurações e as capturas que batem
-com o que você digitou. `Del` exclui de vez. O histórico fica em `%LOCALAPPDATA%\Klick\history` (as últimas 1000
-capturas).
+**Galeria:** menu lateral de vidro com Capturar, Gravar, as coleções (Tudo, Prints, Gravações, GIFs, Leituras e
+Análises), o filtro "Só na galeria", a pasta e as configurações. Cada cartão traz o selo "some em N dias" ou "na pasta".
+A busca procura no texto que aparecia no print ("erro 500", "atencao" acha "Atenção"). `Enter` copia de novo (gravações
+e GIFs vão como arquivo); em Leituras e Análises, abre o texto. `Ctrl+S` guarda na pasta e `Del` exclui de vez. O
+histórico fica em `%LOCALAPPDATA%\Klick\history` (as últimas 1000 capturas).
 
 **Leitura:** além de copiar, `Pesquisar` busca o trecho no Google, `Google Lens` pesquisa a imagem e `Salvar .txt`
 grava o texto em `Leitura/`. Quando o texto é SQL, JSON ou uma grade, aparece "Abrir na Análise".
@@ -70,8 +69,8 @@ ampliado e com as cores invertidas em fundo escuro, como num editor) e fica com 
 linhas de terço, aviso depois de copiar, perguntar antes de gravar e os padrões de formato/som/qualidade, leitura
 precisa, Análise, guardar histórico e abrir com o Windows. As mudanças valem na hora.
 
-**Visual:** a identidade é a "Névoa": vidro claro sobre areia, verde-petróleo só nas ações, vermelho só para gravar e
-âmbar para o que é temporário. Uma família (Manrope) com a hierarquia feita pelo peso, números em JetBrains Mono, cantos
+**Visual:** a identidade é a "Névoa": vidro claro sobre uma bruma verde-petróleo e areia, verde-petróleo só nas ações, vermelho só para gravar e
+âmbar para o que é temporário. A fonte é a do Windows (Segoe UI), nítida em qualquer tamanho, com a hierarquia feita pelo peso, números em Consolas, cantos
 arredondados e botões em pílula. Por cima da tela, os painéis mostram a tela congelada desfocada por trás. O ícone é o
 selo com a cabeça do corvo, com o olho na forma da mira de captura. Cores e estilos ficam em
 [klick/theme.py](klick/theme.py).
@@ -121,7 +120,7 @@ o ffmpeg de verdade, com uma fonte de vídeo sintética no lugar da tela, e são
 | `klick/theme.py`, `icons.py`, `icon.py`, `widgets.py` | Identidade Névoa: cores, fontes, ícones, o corvo, botões, aviso |
 | `klick/recorder.py` | Gravação com ffmpeg (gdigrab/x11grab) e conversão para GIF |
 | `klick/recording_ui.py` | Painel de gravar (vídeo ou GIF) e a moldura e os controles, excluídos do vídeo |
-| `klick/history.py`, `history_ui.py` | Histórico em SQLite com busca FTS5, temporários e a galeria com Ctrl+K |
+| `klick/history.py`, `history_ui.py` | Histórico em SQLite com busca FTS5, temporários e a galeria com menu lateral |
 | `klick/hotkeys.py` | Atalhos globais via pynput e o gravador de atalho |
 | `klick/config.py` | Preferências (QSettings) |
 | `klick/single.py` | Instância única: abrir de novo repassa o comando para o Klick que já está na bandeja |

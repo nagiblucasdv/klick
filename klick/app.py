@@ -109,8 +109,6 @@ class KlickApp(QObject):
             window = HistoryWindow(self._history)
             window.captureRequested.connect(lambda: self.start_capture())
             window.recordRequested.connect(self.toggle_recording)
-            window.ocrRequested.connect(lambda: self.start_capture(Action.OCR))
-            window.analysisRequested.connect(lambda: self.start_capture(Action.SQL))
             window.readRequested.connect(lambda image: self._open_reader(image, record=False))
             window.markRequested.connect(lambda image: self._open_editor_image(image))
             window.sqlRequested.connect(lambda image: self._open_sql(image, record=False))
@@ -179,7 +177,7 @@ class KlickApp(QObject):
         logo.setPixmap(app_icon().pixmap(28, 28))
         words = QVBoxLayout()
         words.setSpacing(0)
-        name = QLabel(f"Klick <span style='color:{theme.G400}; font-weight:500;'>{__version__}</span>")
+        name = QLabel(f"Klick <span style='color:{theme.G400}; font-weight:400;'>{__version__}</span>")
         name.setFont(theme.font(14, 800))
         name.setStyleSheet(f"color: {theme.PAPER};")
         sign = QLabel(f"por {__author__}")
@@ -549,11 +547,10 @@ def selftest() -> int:
 
     Sai com 0 se tudo leu o texto de teste; o código de saída diz o que falhou.
     """
-    from PySide6.QtGui import QColor, QFont, QPainter
+    from PySide6.QtGui import QColor, QFont, QFontInfo, QPainter
 
     app = QApplication(sys.argv[:1])
-    theme.load_fonts()
-    if "Manrope" not in theme.font(13).family():
+    if "Segoe UI" not in QFontInfo(theme.font(13)).family():
         return 2
     if icons.pixmap("copy", theme.S500, 18, 1.0).isNull() or app_icon().isNull():
         return 3

@@ -47,6 +47,11 @@ Name: "startup"; Description: "{cm:TaskStartup}"
 Name: "printscreen"; Description: "{cm:TaskPrintScreen}"; GroupDescription: "{cm:TaskPrintScreenGroup}"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
+[InstallDelete]
+; Atualizar por cima não apaga o que a versão nova deixou de usar: limpa as bibliotecas antes de copiar.
+Type: filesandordirs; Name: "{app}\_internal"
+Type: files; Name: "{app}\Klick.exe.bak"
+
 [Files]
 Source: "..\dist\Klick\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\build\ffmpeg\ffmpeg.exe"; DestDir: "{app}"; Flags: ignoreversion

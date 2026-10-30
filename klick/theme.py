@@ -1,8 +1,8 @@
 """Identidade Névoa: cores, fontes e folhas de estilo do Klick.
 
 Vidro claro sobre areia: superfícies quase brancas e translúcidas, verde-petróleo só nas
-ações, vermelho só para gravar, âmbar para o que é temporário. Uma família só (Manrope),
-com a hierarquia feita pelo peso; números e atalhos em JetBrains Mono. Cantos bem
+ações, vermelho só para gravar, âmbar para o que é temporário. A fonte é a do Windows (Segoe UI),
+nítida em qualquer tamanho, com a hierarquia feita pelo peso; números e atalhos em Consolas. Cantos bem
 arredondados e botões em pílula.
 
 Os nomes das cores (G*, A*, S*) vêm das identidades anteriores e foram mantidos para o
@@ -13,14 +13,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import cache
-from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QGuiApplication, QPalette
+import sys
 
-FONTS_DIR = Path(__file__).with_name("assets") / "fonts"
-FAMILY = "Manrope"
-MONO = "JetBrains Mono"
+from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QPalette
+
+FAMILY = "Segoe UI"
+MONO = "Consolas"
 
 # Superfícies e linhas, da página (950) à linha mais forte (600); 500 e 400 são textos apagados.
 G950, G900, G850, G800, G700, G600, G500, G400 = (
@@ -39,6 +39,10 @@ INK = "#ffffff"  # texto sobre a cor de ação
 
 GLASS = QColor(255, 253, 250, 214)  # painéis sobre a tela congelada (com o fundo desfocado por baixo)
 GLASS_LINE = QColor(255, 255, 255, 235)
+PANE = QColor(255, 255, 255, 150)  # vidro das janelas, sobre a névoa (menu lateral, cartões)
+PANE_STRONG = QColor(255, 255, 255, 215)  # o mesmo vidro com o mouse em cima
+# A névoa do fundo das janelas: bruma verde-petróleo, menta e areia sobre a página.
+MIST = (QColor(19, 148, 130, 60), QColor(180, 222, 214, 150), QColor(234, 216, 192, 150))
 
 RADIUS = 9  # controles (campos, botões quadrados)
 PILL = 17  # botões em pílula de 34 px
@@ -62,8 +66,7 @@ LIGHT = Scheme(G950, G900, G850, PAPER, G400, G700)
 
 
 def apply(app: QGuiApplication) -> None:
-    """Fontes, esquema claro (mesmo com o Windows no modo escuro) e a paleta da Névoa no app todo."""
-    load_fonts()
+    """Esquema claro (mesmo com o Windows no modo escuro) e a paleta da Névoa no app todo."""
     app.styleHints().setColorScheme(Qt.ColorScheme.Light)
     palette = QPalette()
     for role, color in ((QPalette.ColorRole.Window, G950), (QPalette.ColorRole.Base, G850),
@@ -78,32 +81,46 @@ def apply(app: QGuiApplication) -> None:
     app.setPalette(palette)
     app.setFont(font(13))
     app.setStyleSheet(app_stylesheet())
+    if sys.platform == "win32":
+        app._title_bars = _TitleBars(app)
+        app.installEventFilter(app._title_bars)
 
 
-def load_fonts() -> None:
-    """Registra Manrope e JetBrains Mono, que vão junto com o app."""
-    if getattr(load_fonts, "done", False):
-        return
-    for path in sorted(FONTS_DIR.glob("*.ttf")):
-        QFontDatabase.addApplicationFont(str(path))
-    load_fonts.done = True
+class _TitleBars(QObject):
+    """Barra de título na cor da página: sem isso, o Windows no modo escuro deixa uma faixa preta em cima."""
+
+    def eventFilter(self, obj, event) -> bool:
+        if (event.type() == QEvent.Type.Show and obj.isWidgetType() and obj.isWindow()
+                and obj.windowType() in (Qt.WindowType.Window, Qt.WindowType.Dialog)
+                and not obj.windowFlags() & Qt.WindowType.FramelessWindowHint):
+            title_bar(int(obj.winId()))
+        return False
+
+
+def title_bar(hwnd: int) -> None:
+    import ctypes
+
+    def bgr(color: str) -> int:
+        c = QColor(color)
+        return c.red() | c.green() << 8 | c.blue() << 16
+
+    dwm = ctypes.windll.dwmapi
+    for attribute, value in ((20, 0), (35, bgr(G950)), (36, bgr(PAPER))):  # modo escuro, fundo, texto
+        v = ctypes.c_int(value)
+        dwm.DwmSetWindowAttribute(hwnd, attribute, ctypes.byref(v), ctypes.sizeof(v))
 
 
 def font(px: float, weight: int = 500, width: int = 100, mono: bool = False, caps: bool = False) -> QFont:
     """Fonte em pixels. `width` acima de 100 (títulos) só reforça o peso; `caps` é para rótulos de seção."""
-    load_fonts()
     f = QFont(MONO if mono else FAMILY)
     f.setPixelSize(round(px))
     if width > 100 and not mono:
         weight = max(weight, 700)
-    f.setWeight(QFont.Weight(min(weight, 800)))
+    # A Segoe UI tem 400, 600 e 700: um peso no meio faria o Windows inventar um, e aí borra.
+    f.setWeight(QFont.Weight(400 if weight < 550 else 600 if weight < 650 else 700))
     if caps:
         f.setCapitalization(QFont.Capitalization.AllUppercase)
         f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.7)
-    if mono:  # sem ligaduras: ">=" continua ">=" e não vira "≥" (pareceria que o OCR mudou o texto)
-        for tag in ("calt", "liga"):
-            f.setFeature(QFont.Tag(tag), 0)
-    f.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
     return f
 
 
@@ -159,7 +176,7 @@ def app_stylesheet() -> str:
 QToolTip {{ background: {G900}; color: {PAPER}; border: 1px solid {G700}; padding: 5px 8px; border-radius: 8px;
     font-family: '{FAMILY}'; font-size: 12.5px; }}
 QMenu {{ background: {G900}; color: {PAPER}; border: 1px solid {G700}; border-radius: {WINDOW_RADIUS}px; padding: 6px;
-    font-family: '{FAMILY}'; font-size: 13.5px; font-weight: 500; min-width: 250px; }}
+    font-family: '{FAMILY}'; font-size: 13.5px; font-weight: 400; min-width: 250px; }}
 QMenu::item {{ padding: 8px 18px 8px 10px; border-radius: 9px; }}
 QMenu::item:selected {{ background: {SOFT}; color: {S600}; }}
 QMenu::item:disabled {{ color: {G500}; }}
