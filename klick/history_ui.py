@@ -1,55 +1,61 @@
-"""Galeria: as capturas em quatro coleções (prints, gravações, GIFs e leitura), com busca no texto."""
+"""Galeria: as capturas em coleções (prints, gravações, GIFs, leituras e análises), com busca no
+texto e a paleta de comandos (Ctrl+K).
+
+Cada cartão mostra se a captura está só na galeria (e em quantos dias some) ou já
+guardada na pasta.
+"""
 
 from __future__ import annotations
 
 from datetime import date, timedelta
 
-from PySide6.QtCore import QModelIndex, QPointF, QRectF, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QModelIndex, QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (QAction, QColor, QDesktopServices, QFontMetrics, QImage, QKeySequence, QPainter,
                            QPainterPath, QPen, QPixmap, QShortcut)
-from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineEdit, QListView,
-                               QListWidget, QListWidgetItem, QMenu, QStackedLayout, QStyle, QStyledItemDelegate,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel,
+                               QLineEdit, QListView, QListWidget, QListWidgetItem, QMenu, QStackedLayout, QStyle,
+                               QStyledItemDelegate, QVBoxLayout, QWidget)
 
-from klick import config, icons, lens, theme
+from klick import __author__, config, icons, lens, theme
 from klick.actions import copy_file, copy_image, copy_text
-from klick.history import Collection, Entry, History
+from klick.history import FOLDER_KIND, Collection, Entry, History
 from klick.icon import app_icon
 from klick.widgets import button, confirm, icon_button
 
-CARD = QSize(196, 120)  # miniatura
-PAD = 6  # moldura do cartão em volta da miniatura
-CAPTION = 30
-GAP = 12
-TICK = 9  # marcas de canto (ciano) na miniatura
-SIDEBAR = 214
+CARD = QSize(212, 124)  # miniatura
+CAPTION = 52
+GAP = 14
+RADIUS = 14
 
 COLLECTIONS = [
-    (Collection.PRINTS, "image", "Prints"),
-    (Collection.RECORDINGS, "video", "Gravações"),
-    (Collection.GIFS, "gif", "GIFs"),
-    (Collection.READING, "read", "Leitura"),
+    (None, "Tudo"),
+    (Collection.PRINTS, "Prints"),
+    (Collection.RECORDINGS, "Gravações"),
+    (Collection.GIFS, "GIFs"),
+    (Collection.READING, "Leituras"),
+    (Collection.ANALYSIS, "Análises"),
 ]
 EMPTY = {
-    Collection.PRINTS: ("Nenhum print ainda", "Aperte PrintScreen, selecione uma área e copie ou salve."),
-    Collection.RECORDINGS: ("Nenhuma gravação ainda", "Na seleção, escolha Gravar ou aperte Ctrl+Shift+R."),
-    Collection.GIFS: ("Nenhum GIF ainda", "Na seleção, escolha GIF para gravar um GIF curto."),
-    Collection.READING: ("Nada lido ainda", "Escolha Ler na seleção ou aperte Ctrl+Shift+T sobre um texto."),
+    None: ("Nada aqui ainda", "Aperte PrtSc, selecione uma área e copie."),
+    Collection.PRINTS: ("Nenhum print ainda", "Aperte PrtSc, selecione uma área e copie ou salve."),
+    Collection.RECORDINGS: ("Nenhuma gravação ainda", "Aperte o atalho de gravar, escolha a área e Vídeo."),
+    Collection.GIFS: ("Nenhum GIF ainda", "Aperte o atalho de gravar, escolha a área e GIF."),
+    Collection.READING: ("Nada lido ainda", "Escolha Ler na seleção ou use o atalho de ler texto."),
+    Collection.ANALYSIS: ("Nenhuma análise ainda", "Escolha Análise na seleção sobre um SQL, JSON ou tabela."),
 }
-NOUNS = {Collection.PRINTS: ("print", "prints"), Collection.RECORDINGS: ("gravação", "gravações"),
-         Collection.GIFS: ("GIF", "GIFs"), Collection.READING: ("leitura", "leituras")}
+NOUNS = {None: ("item", "itens"), Collection.PRINTS: ("print", "prints"),
+         Collection.RECORDINGS: ("gravação", "gravações"), Collection.GIFS: ("GIF", "GIFs"),
+         Collection.READING: ("leitura", "leituras"), Collection.ANALYSIS: ("análise", "análises")}
 ENTRY_ROLE = Qt.ItemDataRole.UserRole
-FOLDER_KIND = {Collection.PRINTS: "prints", Collection.RECORDINGS: "recordings", Collection.GIFS: "gifs",
-               Collection.READING: "reading"}
 
 
 def when(entry: Entry) -> str:
     day = entry.created_at.date()
     if day == date.today():
-        return entry.created_at.strftime("%H:%M")
+        return f"Hoje {entry.created_at:%H:%M}"
     if day == date.today() - timedelta(days=1):
-        return "ontem"
-    return entry.created_at.strftime("%d/%m")
+        return f"Ontem {entry.created_at:%H:%M}"
+    return entry.created_at.strftime("%d/%m %H:%M")
 
 
 def title(entry: Entry) -> str:
@@ -66,22 +72,31 @@ def duration(seconds: float | None) -> str:
     return f"{s // 60:02d}:{s % 60:02d}"
 
 
-class CardDelegate(QStyledItemDelegate):
-    """Miniatura com o anel laranja quando selecionada, título, hora e selo de duração."""
+def status(entry: Entry, days: int) -> tuple[str, bool]:
+    """Selo do cartão: ("some em 5 dias", True) se é temporário, ("na pasta", False) se guardado."""
+    left = entry.expires_in(days)
+    if left is None:
+        return ("só na galeria", True) if entry.temp else ("na pasta", False)
+    return ("some hoje" if left == 0 else f"some em {left} dia{'s' if left != 1 else ''}"), True
 
-    def __init__(self, scheme: theme.Scheme, parent=None):
+
+class CardDelegate(QStyledItemDelegate):
+    """Cartão: miniatura em cima, título, data e o selo (temporário ou na pasta)."""
+
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self._s = scheme
-        self._title_font = theme.font(13, 500)
-        self._meta_font = theme.font(11, 400, mono=True)
-        self._badge_font = theme.font(10.5, 600, mono=True)
+        self._title_font = theme.font(13, 700)
+        self._meta_font = theme.font(11.5, 500)
+        self._badge_font = theme.font(11, 700)
         self._cache: dict[int, QPixmap] = {}
+        self.days = config.temp_days()
 
     def sizeHint(self, option, index) -> QSize:
-        return QSize(CARD.width() + 2 * PAD + GAP, CARD.height() + 2 * PAD + CAPTION + GAP)
+        return QSize(CARD.width() + GAP, CARD.height() + CAPTION + GAP)
 
     def forget(self) -> None:
         self._cache.clear()
+        self.days = config.temp_days()
 
     def _thumb(self, entry: Entry, ratio: float) -> QPixmap:
         pm = self._cache.get(entry.id)
@@ -106,69 +121,82 @@ class CardDelegate(QStyledItemDelegate):
         p.save()
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         cell = option.rect
-        frame = QRectF(cell.left() + GAP / 2, cell.top() + GAP / 2, CARD.width() + 2 * PAD,
-                       CARD.height() + 2 * PAD + CAPTION)
-        card = QRectF(frame.left() + PAD, frame.top() + PAD, CARD.width(), CARD.height())
+        frame = QRectF(cell.left() + GAP / 2, cell.top() + GAP / 2, CARD.width(), CARD.height() + CAPTION)
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
 
-        p.setPen(QPen(QColor(theme.S500 if selected else theme.G600 if hover else theme.G700), 2 if selected else 1))
-        p.setBrush(QColor(theme.G800 if hover or selected else theme.G900))
-        p.drawRoundedRect(frame.adjusted(0.5, 0.5, -0.5, -0.5), theme.WINDOW_RADIUS, theme.WINDOW_RADIUS)
-
-        clip = QPainterPath()
-        clip.addRoundedRect(card, 3, 3)
-        p.setClipPath(clip)
-        p.drawPixmap(card.toRect(), self._thumb(entry, p.device().devicePixelRatioF()))
+        if hover or selected:
+            shadow = QPainterPath()
+            shadow.addRoundedRect(frame.adjusted(0, 3, 0, 5), RADIUS, RADIUS)
+            p.fillPath(shadow, QColor(30, 27, 24, 22))
+        card = QPainterPath()
+        card.addRoundedRect(frame, RADIUS, RADIUS)
+        p.fillPath(card, QColor(theme.G850))
+        p.setClipPath(card)
+        thumb = QRectF(frame.left(), frame.top(), CARD.width(), CARD.height())
+        p.drawPixmap(thumb.toRect(), self._thumb(entry, p.device().devicePixelRatioF()))
         p.setClipping(False)
-
-        # Marcas de canto, como no visor de um instrumento.
-        tick = QPen(QColor(theme.CYAN), 2)
-        tick.setCapStyle(Qt.PenCapStyle.SquareCap)
-        p.setPen(tick)
-        inner = card.adjusted(4, 4, -4, -4)
-        p.drawPolyline([QPointF(inner.left(), inner.top() + TICK), inner.topLeft(), QPointF(inner.left() + TICK, inner.top())])
-        p.drawPolyline([QPointF(inner.right(), inner.bottom() - TICK), inner.bottomRight(),
-                        QPointF(inner.right() - TICK, inner.bottom())])
+        p.setPen(QPen(QColor(theme.S500 if selected else theme.G600 if hover else theme.G700), 2 if selected else 1))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawPath(card)
 
         badge = {"video": duration(entry.duration) or "MP4", "gif": "GIF"}.get(entry.kind)
         if badge:
             p.setFont(self._badge_font)
-            w = QFontMetrics(self._badge_font).horizontalAdvance(badge) + 12
-            box = QRectF(card.right() - w - 6, card.bottom() - 24, w, 18)
+            w = QFontMetrics(self._badge_font).horizontalAdvance(badge) + 16
+            box = QRectF(thumb.right() - w - 8, thumb.bottom() - 28, w, 20)
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(11, 18, 22, 220))
-            p.drawRoundedRect(box, 2, 2)
-            p.setPen(QColor(theme.DATA))
+            p.setBrush(QColor(30, 27, 24, 190))
+            p.drawRoundedRect(box, 10, 10)
+            p.setPen(QColor("#ffffff"))
             p.drawText(box, Qt.AlignmentFlag.AlignCenter, badge)
 
-        meta = when(entry)
-        p.setFont(self._meta_font)
-        meta_w = QFontMetrics(self._meta_font).horizontalAdvance(meta)
-        line = QRectF(card.left(), card.bottom() + 6, card.width(), CAPTION - 8)
-        p.setPen(QColor(theme.DATA))
-        p.drawText(line, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, meta)
+        text = QRectF(frame.left() + 12, thumb.bottom() + 8, frame.width() - 24, 18)
         p.setFont(self._title_font)
-        text = QFontMetrics(self._title_font).elidedText(title(entry), Qt.TextElideMode.ElideRight,
-                                                        int(card.width() - meta_w - 10))
-        p.setPen(QColor(self._s.fg))
-        p.drawText(line, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
+        p.setPen(QColor(theme.PAPER))
+        p.drawText(text, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   QFontMetrics(self._title_font).elidedText(title(entry), Qt.TextElideMode.ElideRight,
+                                                             int(text.width())))
+        meta = QRectF(text.left(), text.bottom() + 2, text.width(), 18)
+        label, temp = status(entry, self.days)
+        p.setFont(self._badge_font)
+        bw = QFontMetrics(self._badge_font).horizontalAdvance(label) + 16
+        pill = QRectF(meta.right() - bw, meta.top(), bw, 18)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(theme.TEMP_BG if temp else theme.SOFT))
+        p.drawRoundedRect(pill, 9, 9)
+        p.setPen(QColor(theme.TEMP_FG if temp else theme.S600))
+        p.drawText(pill, Qt.AlignmentFlag.AlignCenter, label)
+        p.setFont(self._meta_font)
+        p.setPen(QColor(theme.G400))
+        p.drawText(meta.adjusted(0, 0, -bw - 6, 0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   when(entry))
         p.restore()
 
 
-class NavButton(QAbstractButton):
-    """Item da barra lateral: ícone, nome da coleção e a contagem em ciano."""
+class Pill(QAbstractButton):
+    """Aba de coleção em pílula: nome e contagem. A escolhida fica escura."""
 
-    def __init__(self, icon_name: str, label: str):
+    def __init__(self, label: str):
         super().__init__()
         self.setCheckable(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedHeight(36)
-        self.setProperty("label", label)
+        self.setFixedHeight(32)
         self.setAccessibleName(label)
-        self.setText(label)
-        self._icon = icon_name
+        self.label = label
+        self.count = 0
         self._hover = False
+        self._resize()
+
+    def set_count(self, count: int) -> None:
+        self.count = count
+        self._resize()
+        self.update()
+
+    def _resize(self) -> None:
+        m = QFontMetrics(theme.font(13, 700))
+        c = QFontMetrics(theme.font(12, 500))
+        self.setFixedWidth(m.horizontalAdvance(self.label) + c.horizontalAdvance(str(self.count)) + 34)
 
     def enterEvent(self, event) -> None:
         self._hover = True
@@ -181,118 +209,217 @@ class NavButton(QAbstractButton):
     def paintEvent(self, event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        r = QRectF(self.rect())
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         on = self.isChecked()
         if on or self._hover:
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(theme.G700 if on else theme.G800))
-            p.drawRoundedRect(r, 4, 4)
-        if on:  # o "pill" do Windows 11, em laranja
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(theme.S500))
-            p.drawRoundedRect(QRectF(0, 9, 3, r.height() - 18), 1.5, 1.5)
-        color = theme.PAPER if on else theme.A400
-        p.drawPixmap(12, round((r.height() - 18) / 2), icons.pixmap(self._icon, theme.S400 if on else theme.G400, 18))
-        label = self.property("label")
-        count = self.text()[len(label):].strip()
-        p.setFont(theme.font(14, 600 if on else 500))
-        p.setPen(QColor(color))
-        p.drawText(r.adjusted(42, 0, -40, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, label)
-        if count:
-            p.setFont(theme.font(11.5, 500, mono=True))
-            p.setPen(QColor(theme.DATA if on else theme.G400))
-            p.drawText(r.adjusted(0, 0, -12, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, count)
+            p.setBrush(QColor(theme.PAPER if on else "#ffffff"))
+            p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
         if self.hasFocus():
-            p.setPen(QPen(QColor(theme.CYAN), 1))
+            p.setPen(QPen(QColor(theme.S500), 1.5))
             p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4)
+            p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
+        name = theme.font(13, 700)
+        p.setFont(name)
+        p.setPen(QColor("#ffffff" if on else theme.PAPER))
+        w = QFontMetrics(name).horizontalAdvance(self.label)
+        p.drawText(QRectF(14, 0, w + 2, r.height()), Qt.AlignmentFlag.AlignVCenter, self.label)
+        p.setFont(theme.font(12, 500))
+        p.setPen(QColor("#d9d3cb" if on else theme.G400))
+        p.drawText(QRectF(14 + w + 6, 0, 40, r.height()), Qt.AlignmentFlag.AlignVCenter, str(self.count))
+
+
+class CommandPalette(QFrame):
+    """Ctrl+K: ações do Klick e capturas que batem com o texto, num lugar só."""
+
+    chosen = Signal(str, object)  # chave do comando, dado (Entry quando é uma captura)
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.setObjectName("palette")
+        self.setStyleSheet(f"""
+            QFrame#palette {{ background: {theme.G900}; border: 1px solid {theme.G600};
+                border-radius: 18px; }}
+            QLineEdit {{ background: transparent; border: none; padding: 4px 2px; font-size: 15px; }}
+            QListWidget {{ background: transparent; border: none; outline: 0; }}
+            QListWidget::item {{ padding: 9px 10px; border-radius: 10px; color: {theme.PAPER}; }}
+            QListWidget::item:selected {{ background: {theme.SOFT}; color: {theme.S600}; }}""")
+        self.commands: list[tuple[str, str, str, str]] = []  # (chave, ícone, texto, atalho)
+        col = QVBoxLayout(self)
+        col.setContentsMargins(14, 10, 10, 10)
+        col.setSpacing(6)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        mark = QLabel()
+        mark.setPixmap(icons.pixmap("command", theme.S600, 18))
+        self.input = QLineEdit(placeholderText="Digite um comando ou busque nas capturas")
+        self.input.setAccessibleName("Comando")
+        self.input.textChanged.connect(self.refresh)
+        self.input.installEventFilter(self)
+        esc = QLabel("Esc")
+        esc.setFont(theme.font(11, 500, mono=True))
+        esc.setProperty("role", "muted")
+        row.addWidget(mark)
+        row.addWidget(self.input, 1)
+        row.addWidget(esc)
+        col.addLayout(row)
+        self.list = QListWidget()
+        self.list.setFont(theme.font(13.5, 600))
+        self.list.itemActivated.connect(self._activate)
+        self.list.itemClicked.connect(self._activate)
+        col.addWidget(self.list, 1)
+        hint = QLabel("↑↓ escolhe · Enter abre")
+        hint.setProperty("role", "muted")
+        hint.setFont(theme.font(11.5, 500))
+        col.addWidget(hint)
+        self.search = lambda text: []  # trocado pela galeria: capturas que batem com o texto
+        self._max_height = 440
+        shadow = QGraphicsDropShadowEffect(self, blurRadius=48, xOffset=0, yOffset=14)
+        shadow.setColor(QColor(30, 27, 24, 70))
+        self.setGraphicsEffect(shadow)
+        self.hide()
+
+    def open(self) -> None:
+        parent = self.parentWidget()
+        width = min(560, parent.width() - 40)
+        self._max_height = min(440, parent.height() - 100)
+        self.setGeometry((parent.width() - width) // 2, 70, width, self._max_height)
+        self.input.clear()
+        self.refresh()
+        self.show()
+        self.raise_()
+        self.input.setFocus()
+
+    def refresh(self) -> None:
+        text = self.input.text().strip().lower()
+        self.list.clear()
+        for key, icon_name, label, shortcut in self.commands:
+            if text and text not in label.lower():
+                continue
+            item = QListWidgetItem(icons.icon(icon_name, theme.A300, size=18),
+                                   f"{label}    {shortcut}" if shortcut else label)
+            item.setData(Qt.ItemDataRole.UserRole, (key, None))
+            self.list.addItem(item)
+        if text:
+            for entry in self.search(text)[:6]:
+                item = QListWidgetItem(icons.icon("image", theme.G400, size=18), f"{title(entry)}  ·  {when(entry)}")
+                item.setData(Qt.ItemDataRole.UserRole, ("entry", entry))
+                self.list.addItem(item)
+        if self.list.count():
+            self.list.setCurrentRow(0)
+        rows = max(1, self.list.count())
+        self.setFixedHeight(min(self._max_height, 92 + rows * 42))
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is self.input and event.type() == event.Type.KeyPress:
+            key = event.key()
+            if key in (Qt.Key.Key_Down, Qt.Key.Key_Up):
+                row = self.list.currentRow() + (1 if key == Qt.Key.Key_Down else -1)
+                self.list.setCurrentRow(max(0, min(row, self.list.count() - 1)))
+                return True
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                if self.list.currentItem() is not None:
+                    self._activate(self.list.currentItem())
+                return True
+            if key == Qt.Key.Key_Escape:
+                self.hide()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _activate(self, item: QListWidgetItem) -> None:
+        key, data = item.data(Qt.ItemDataRole.UserRole)
+        self.hide()
+        self.chosen.emit(key, data)
 
 
 class HistoryWindow(QWidget):
     captureRequested = Signal()
+    recordRequested = Signal()
+    ocrRequested = Signal()
+    analysisRequested = Signal()
     readRequested = Signal(QImage)
     markRequested = Signal(QImage)
-    settingsRequested = Signal()
+    settingsRequested = Signal(str)  # seção para abrir ("" = do começo)
     sqlRequested = Signal(QImage)
 
     def __init__(self, history: History):
         super().__init__(None, Qt.WindowType.Window)
         self._history = history
-        self._scheme = theme.window_scheme()
         self.setObjectName("window")
         self.setWindowTitle("Klick: galeria")
         self.setWindowIcon(app_icon())
-        self.setStyleSheet(theme.window_stylesheet(self._scheme))
-        self.resize(1120, 700)
-        self.collection = Collection.PRINTS
+        self.setStyleSheet(theme.window_stylesheet() + f"""
+            QLineEdit#search {{ background: #ffffff; border: 1px solid {theme.G700}; border-radius: 21px;
+                padding: 9px 16px; font-size: 14px; }}
+            QLineEdit#search:focus {{ border: 2px solid {theme.S500}; padding: 8px 15px; }}
+            QPushButton#tempFilter {{ background: {theme.TEMP_BG}; color: {theme.TEMP_FG}; border-color: transparent; }}
+            QPushButton#tempFilter:checked {{ background: {theme.TEMP_FG}; color: #ffffff; }}""")
+        self.resize(1180, 760)
+        self.collection: Collection | None = Collection.PRINTS
+        self.temp_only = False
 
-        side = QFrame(objectName="side")
-        side.setFixedWidth(SIDEBAR)
-        side.setStyleSheet(f"QFrame#side {{ background: {theme.G900}; border-right: 1px solid {theme.G700}; }}")
-        side_col = QVBoxLayout(side)
-        side_col.setContentsMargins(10, 16, 10, 12)
-        side_col.setSpacing(3)
-        brand = QHBoxLayout()
-        brand.setContentsMargins(6, 0, 0, 10)
-        brand.setSpacing(10)
+        # --- topo: marca, busca no meio, ações ---
         logo = QLabel()
-        logo.setPixmap(app_icon().pixmap(24, 24))
+        logo.setPixmap(app_icon().pixmap(30, 30))
         name = QLabel("Klick")
-        name.setFont(theme.font(20, 700, 120))
-        brand.addWidget(logo)
-        brand.addWidget(name)
-        brand.addStretch(1)
-        side_col.addLayout(brand)
-        capture = button("Nova captura", "primary", "spot")
-        capture.setToolTip(theme.tip("Nova captura", "PrtSc"))
-        capture.clicked.connect(self.captureRequested.emit)
-        side_col.addWidget(capture)
-        side_col.addSpacing(12)
-        section = QLabel("COLEÇÕES")
-        section.setProperty("role", "muted")
-        section.setFont(theme.font(10.5, 600, mono=True))
-        section.setContentsMargins(8, 0, 0, 4)
-        side_col.addWidget(section)
-
-        self._tabs = QButtonGroup(self)
-        self._tab_buttons: dict[Collection, NavButton] = {}
-        for collection, icon_name, label in COLLECTIONS:
-            tab = NavButton(icon_name, label)
-            tab.setChecked(collection is self.collection)
-            tab.clicked.connect(lambda _=False, c=collection: self.show_collection(c))
-            self._tabs.addButton(tab)
-            self._tab_buttons[collection] = tab
-            side_col.addWidget(tab)
-        side_col.addStretch(1)
-        settings = NavButton("gear", "Configurações")
-        settings.setCheckable(False)
-        settings.clicked.connect(self.settingsRequested.emit)
-        side_col.addWidget(settings)
-
-        self._heading = QLabel("Prints")
-        self._heading.setFont(theme.font(28, 700, 120))
-        self._count = QLabel()
-        self._count.setProperty("role", "data")
-        self._count.setFont(theme.font(12, 500, mono=True))
-        self._search = QLineEdit(placeholderText="Buscar no texto dos prints, ex.: erro 500")
+        name.setFont(theme.font(18, 800))
+        self._search = QLineEdit(objectName="search", placeholderText="Buscar no texto das capturas, ex.: erro 500")
         self._search.setClearButtonEnabled(True)
-        self._search.addAction(icons.icon("search", self._scheme.muted, size=16),
-                               QLineEdit.ActionPosition.LeadingPosition)
-        self._search.setMinimumWidth(320)
+        self._search.addAction(icons.icon("search", theme.G400, size=16), QLineEdit.ActionPosition.LeadingPosition)
+        self._search.setMinimumWidth(420)
+        self._search.setMaximumWidth(560)
         self._search.setAccessibleName("Buscar")
         self._debounce = QTimer(self, singleShot=True, interval=200, timeout=self.refresh)
         self._search.textChanged.connect(self._debounce.start)
+        keys = {name_: config.hotkey_label(combo) for name_, combo in config.hotkeys().items()}
+        capture = button("Capturar", "primary", "spot")
+        capture.setToolTip(theme.tip("Capturar uma área", keys["capture"]))
+        capture.clicked.connect(self.captureRequested.emit)
+        record = button("Gravar", "secondary", "rec")
+        record.setIcon(icons.icon("rec", theme.REC, size=16))
+        record.setToolTip(theme.tip("Gravar vídeo ou GIF", keys["record"]))
+        record.clicked.connect(self.recordRequested.emit)
+        commands = icon_button("command", "Comandos", "Ctrl K")
+        commands.clicked.connect(self.open_palette)
+        settings = icon_button("gear", "Configurações")
+        settings.clicked.connect(lambda: self.settingsRequested.emit(""))
         top = QHBoxLayout()
-        top.setSpacing(12)
-        top.addWidget(self._heading, 0, Qt.AlignmentFlag.AlignBaseline)
-        top.addWidget(self._count, 0, Qt.AlignmentFlag.AlignBaseline)
+        top.setSpacing(10)
+        top.addWidget(logo)
+        top.addWidget(name)
         top.addStretch(1)
-        top.addWidget(self._search)
-        self._folder_button = self._top_button("folder", "Abrir a pasta desta coleção")
-        self._folder_button.clicked.connect(self._open_folder)
-        top.addWidget(self._folder_button)
+        top.addWidget(self._search, 3)
+        top.addStretch(1)
+        top.addWidget(capture)
+        top.addWidget(record)
+        top.addWidget(commands)
+        top.addWidget(settings)
 
-        self._delegate = CardDelegate(self._scheme, self)
+        # --- coleções em pílula e o filtro do que é temporário ---
+        self._tabs = QButtonGroup(self)
+        self._tab_buttons: dict[Collection | None, Pill] = {}
+        tabs = QHBoxLayout()
+        tabs.setSpacing(4)
+        for collection, label in COLLECTIONS:
+            pill = Pill(label)
+            pill.setChecked(collection is self.collection)
+            pill.clicked.connect(lambda _=False, c=collection: self.show_collection(c))
+            self._tabs.addButton(pill)
+            self._tab_buttons[collection] = pill
+            tabs.addWidget(pill)
+        tabs.addStretch(1)
+        self._temp_filter = button("", "secondary", "clock")
+        self._temp_filter.setObjectName("tempFilter")
+        self._temp_filter.setCheckable(True)
+        self._temp_filter.setIcon(icons.icon("clock", theme.TEMP_FG, checked="#ffffff", size=16))
+        self._temp_filter.setToolTip("Mostrar só o que ainda não foi guardado na pasta")
+        self._temp_filter.toggled.connect(self._toggle_temp)
+        tabs.addWidget(self._temp_filter)
+        self._folder_button = icon_button("folder", "Abrir a pasta desta coleção")
+        self._folder_button.clicked.connect(self._open_folder)
+        tabs.addWidget(self._folder_button)
+
+        self._delegate = CardDelegate(self)
         self._list = QListWidget()
         self._list.setViewMode(QListView.ViewMode.IconMode)
         self._list.setResizeMode(QListView.ResizeMode.Adjust)
@@ -312,10 +439,10 @@ class HistoryWindow(QWidget):
         empty_col = QVBoxLayout(self._empty)
         empty_col.addStretch(1)
         self._empty_title = QLabel(alignment=Qt.AlignmentFlag.AlignCenter)
-        self._empty_title.setFont(theme.font(17, 750, 112))
+        self._empty_title.setFont(theme.font(18, 800))
         self._empty_text = QLabel(alignment=Qt.AlignmentFlag.AlignCenter, wordWrap=True)
         self._empty_text.setProperty("role", "muted")
-        self._empty_action = button("Nova captura", "primary", "spot")
+        self._empty_action = button("Capturar", "primary", "spot")
         self._empty_action.clicked.connect(self.captureRequested.emit)
         empty_col.addWidget(self._empty_title)
         empty_col.addWidget(self._empty_text)
@@ -330,23 +457,32 @@ class HistoryWindow(QWidget):
 
         self._status = QLabel()
         self._status.setProperty("role", "muted")
-        self._status.setFont(theme.font(11.5, 400, mono=True))
+        self._status.setFont(theme.font(12, 500))
+        sign = QLabel(f"criado por {__author__}")
+        sign.setProperty("role", "muted")
+        sign.setFont(theme.font(11.5, 500))
+        foot = QHBoxLayout()
+        foot.addWidget(self._status, 1)
+        foot.addWidget(sign)
 
-        main = QVBoxLayout()
-        main.setContentsMargins(22, 16, 20, 12)
-        main.setSpacing(14)
-        main.addLayout(top)
-        main.addLayout(stack, 1)
-        main.addWidget(self._status)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(side)
-        layout.addLayout(main, 1)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 14, 20, 12)
+        layout.setSpacing(12)
+        layout.addLayout(top)
+        layout.addLayout(tabs)
+        layout.addLayout(stack, 1)
+        layout.addLayout(foot)
 
+        self.palette = CommandPalette(self)
+        self.palette.commands = self._commands(keys)
+        self.palette.search = lambda text: self._history.search(text, limit=6)
+        self.palette.chosen.connect(self._run_command)
+
+        QShortcut(QKeySequence("Ctrl+K"), self, activated=self.open_palette)
         QShortcut(QKeySequence.StandardKey.Find, self, activated=self._search.setFocus)
-        QShortcut(QKeySequence("Escape"), self, activated=self.close)
+        QShortcut(QKeySequence("Escape"), self, activated=self._escape)
         QShortcut(QKeySequence.StandardKey.Copy, self, activated=self._copy_selected)
+        QShortcut(QKeySequence.StandardKey.Save, self, activated=self._keep_selected)
         QShortcut(QKeySequence.StandardKey.Delete, self, activated=self._delete_selected)
 
         history.changed.connect(self._on_changed)
@@ -354,22 +490,25 @@ class HistoryWindow(QWidget):
 
     # --- API ---------------------------------------------------------------
 
-    def show_collection(self, collection: Collection) -> None:
+    def show_collection(self, collection: Collection | None) -> None:
         self.collection = collection
         self._tab_buttons[collection].setChecked(True)
         self.refresh()
 
+    def open_palette(self) -> None:
+        self.palette.open()
+
     def refresh(self) -> None:
         query = self._search.text().strip()
         counts = self._history.counts(query)
-        for collection, tab in self._tab_buttons.items():
-            tab.setText(f"{tab.property('label')}  {counts[collection]}")
-            tab.update()
-        self._heading.setText(self._tab_buttons[self.collection].property("label"))
-        one, many = NOUNS[self.collection]
-        total = counts[self.collection]
-        self._count.setText(f"{total} {one if total == 1 else many}")
-        entries = self._history.search(query, collection=self.collection)
+        for collection, pill in self._tab_buttons.items():
+            pill.set_count(sum(counts.values()) if collection is None else counts[collection])
+        temp = self._history.temp_count()
+        days = config.temp_days()
+        self._temp_filter.setText(f"{temp} só na galeria")
+        self._temp_filter.setToolTip("Mostrar só o que ainda não foi guardado na pasta"
+                                     + (f". Some em {days} dias." if days else "."))
+        entries = self._history.search(query, collection=self.collection, temp_only=self.temp_only)
         self._delegate.forget()
         self._list.clear()
         for entry in entries:
@@ -383,27 +522,68 @@ class HistoryWindow(QWidget):
         else:
             if query:
                 head, text = f'Nada encontrado para "{query}"', "A busca procura no texto que aparecia em cada captura."
+            elif self.temp_only:
+                head, text = "Nada só na galeria", "Tudo desta coleção já está guardado na pasta."
             elif not self._history.enabled:
                 head, text = "O histórico está desligado", 'Ligue em "Guardar histórico" nas configurações.'
             else:
                 head, text = EMPTY[self.collection]
             self._empty_title.setText(head)
             self._empty_text.setText(text)
-            self._empty_action.setVisible(not query and self._history.enabled)
+            self._empty_action.setVisible(not query and not self.temp_only and self._history.enabled)
             self._stack.setCurrentWidget(self._empty)
         self._update_status()
 
     # --- internos ----------------------------------------------------------
 
-    def _top_button(self, name: str, label: str):
-        b = icon_button(name, label)
-        b.setIcon(icons.icon(name, theme.A300, hover=theme.DATA, size=18))
-        b.setStyleSheet(f"QToolButton {{ background: {theme.G800}; border: 1px solid {theme.G700}; border-radius: 3px; }}"
-                        f"QToolButton:hover {{ border-color: {theme.CYAN}; }}")
-        return b
+    def _commands(self, keys: dict[str, str]) -> list[tuple[str, str, str, str]]:
+        out = [("capture", "spot", "Capturar área", keys["capture"]),
+               ("record", "rec", "Gravar vídeo ou GIF", keys["record"]),
+               ("ocr", "read", "Ler texto de uma área", keys["ocr"]),
+               ("analysis", "analysis", "Análise: SQL, JSON ou tabela", ""),
+               ("keep", "keep", "Guardar os selecionados na pasta", "Ctrl+S"),
+               ("temp", "clock", "Mostrar só o que está na galeria", "")]
+        out += [(f"go:{c.value if c else 'all'}", "image", f"Ir para {label}", "") for c, label in COLLECTIONS]
+        out += [("folder", "folder", "Abrir a pasta do Klick", ""),
+                ("settings", "gear", "Configurações", ""),
+                ("settings:hotkeys", "keyboard", "Alterar atalhos de teclado", ""),
+                ("settings:saving", "keep", "Onde salvar e por quanto tempo", "")]
+        return out
+
+    def _run_command(self, key: str, data) -> None:
+        if key == "entry":
+            self.show_collection(data.collection)
+            for i in range(self._list.count()):
+                if self._list.item(i).data(ENTRY_ROLE).id == data.id:
+                    self._list.setCurrentRow(i)
+                    self._list.scrollToItem(self._list.item(i))
+            return
+        if key.startswith("go:"):
+            value = key[3:]
+            self.show_collection(None if value == "all" else Collection(value))
+        elif key.startswith("settings"):
+            self.settingsRequested.emit(key.partition(":")[2])
+        else:
+            {"capture": self.captureRequested.emit, "record": self.recordRequested.emit,
+             "ocr": self.ocrRequested.emit, "analysis": self.analysisRequested.emit,
+             "keep": self._keep_selected, "temp": lambda: self._temp_filter.setChecked(True),
+             "folder": lambda: self._open(config.save_dir())}[key]()
+
+    def _escape(self) -> None:
+        if self.palette.isVisible():
+            self.palette.hide()
+        else:
+            self.close()
+
+    def _toggle_temp(self, on: bool) -> None:
+        self.temp_only = on
+        self.refresh()
 
     def _open_folder(self) -> None:
-        folder = config.folder(FOLDER_KIND[self.collection])
+        self._open(config.folder(FOLDER_KIND[self.collection]) if self.collection else config.save_dir())
+
+    @staticmethod
+    def _open(folder) -> None:
         folder.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
@@ -414,11 +594,12 @@ class HistoryWindow(QWidget):
             return
         picked = len(self._list.selectedItems())
         if picked > 1:
-            self._status.setText(f"{picked} selecionados  ·  Del exclui todos  ·  Esc fecha")
+            self._status.setText(f"{picked} selecionados · Ctrl+S guarda na pasta · Del exclui")
             return
         one, many = NOUNS[self.collection]
-        hint = "Enter abre na leitura" if self.collection is Collection.READING else "Enter copia"
-        self._status.setText(f"{count} {one if count == 1 else many}  ·  {hint}  ·  Ctrl+clique escolhe vários  ·  Del exclui")
+        days = config.temp_days()
+        rule = f"O que está só na galeria some em {days} dias." if days else "Nada some sozinho."
+        self._status.setText(f"{count} {one if count == 1 else many} · {rule} Ctrl+S guarda na pasta · Ctrl+K comandos")
 
     def _on_changed(self) -> None:
         if self.isVisible():
@@ -432,6 +613,25 @@ class HistoryWindow(QWidget):
         if (entry := self._selected()) is not None:
             self._copy(entry)
 
+    def _keep_selected(self) -> None:
+        entries = [item.data(ENTRY_ROLE) for item in self._list.selectedItems()]
+        self._keep([e for e in entries if e.temp])
+
+    def _keep(self, entries: list[Entry]) -> None:
+        if not entries:
+            self._status.setText("Nada para guardar: os selecionados já estão na pasta")
+            return
+        try:
+            paths = [self._history.keep(e.id) for e in entries]
+        except OSError as exc:
+            self._status.setText(f"Não deu para guardar: {exc}")
+            return
+        done = [p for p in paths if p]
+        if len(done) == 1:
+            self._status.setText(f"Guardado em {done[0].parent.name}/{done[0].name}")
+        else:
+            self._status.setText(f"{len(done)} capturas guardadas na pasta")
+
     def _delete_selected(self) -> None:
         entries = [item.data(ENTRY_ROLE) for item in self._list.selectedItems()]
         if len(entries) > 1:
@@ -442,6 +642,8 @@ class HistoryWindow(QWidget):
     def _activate(self, entry: Entry) -> None:
         if entry.collection is Collection.READING:
             self.readRequested.emit(QImage(str(entry.image_path)))
+        elif entry.collection is Collection.ANALYSIS:
+            self.sqlRequested.emit(QImage(str(entry.image_path)))
         else:
             self._copy(entry)
 
@@ -464,8 +666,8 @@ class HistoryWindow(QWidget):
         elif entry.media:
             head, effect, action = ("Remover da galeria?", "O arquivo continua na pasta.", "Remover")
         else:
-            head, effect, action = ("Excluir esta captura?", "A imagem e o texto lido são apagados de vez.",
-                                    "Excluir captura")
+            head, effect, action = ("Excluir esta captura?", "Sai da galeria de vez. Uma cópia guardada na pasta "
+                                    "continua lá.", "Excluir captura")
         if confirm(self, head, f"{when_text} {effect}", action, QImage(str(entry.thumb_path))):
             self._history.delete(entry.id, remove_file=remove_file)
 
@@ -485,13 +687,13 @@ class HistoryWindow(QWidget):
         entry: Entry = item.data(ENTRY_ROLE)
         menu = QMenu(self)
 
-        def add(icon_name: str, text: str, slot, shortcut: str | None = None, color: str = theme.G300) -> QAction:
-            action = menu.addAction(icons.icon(icon_name, color, size=16), text, slot)
-            if shortcut:
-                action.setShortcut(QKeySequence(shortcut))
-                action.setShortcutVisibleInContextMenu(True)
-            return action
+        def add(icon_name: str, text: str, slot, shortcut: str | None = None, color: str = theme.A300) -> QAction:
+            return menu.addAction(icons.icon(icon_name, color, size=16), f"{text}\t{shortcut}" if shortcut else text,
+                                  slot)
 
+        if entry.temp:
+            add("keep", "Guardar na pasta", lambda: self._keep([entry]), "Ctrl+S", color=theme.S600)
+            menu.addSeparator()
         if entry.media:
             add("copy", "Copiar arquivo", lambda: self._copy(entry), "Ctrl+C")
             add("video" if entry.kind == "video" else "gif", "Abrir",
@@ -501,17 +703,17 @@ class HistoryWindow(QWidget):
         else:
             image = lambda: QImage(str(entry.image_path))  # noqa: E731 - carrega só se for usada
             add("copy", "Copiar imagem", lambda: self._copy(entry), "Ctrl+C")
+            add("mark", "Editar imagem", lambda: self.markRequested.emit(image()))
             add("read", "Abrir na leitura", lambda: self.readRequested.emit(image()))
-            add("mark", "Marcar", lambda: self.markRequested.emit(image()))
-            add("sql", "Abrir no SQL", lambda: self.sqlRequested.emit(image()))
+            add("analysis", "Abrir na Análise", lambda: self.sqlRequested.emit(image()))
             copy_txt = add("text", "Copiar texto", lambda: copy_text(entry.text))
             copy_txt.setEnabled(bool(entry.text.strip()))
             add("lens", "Pesquisar no Google Lens", lambda: lens.search_image(image()))
-            add("folder", "Abrir imagem", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(entry.image_path))))
+            if entry.saved:
+                add("folder", "Mostrar na pasta",
+                    lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(entry.saved.parent))))
         menu.addSeparator()
         if entry.media:
             add("close", "Remover da galeria…", lambda: self._delete(entry, remove_file=False))
-            add("trash", "Excluir permanentemente…", lambda: self._delete(entry), "Del", color="#ff7a72")
-        else:
-            add("trash", "Excluir permanentemente…", lambda: self._delete(entry), "Del", color="#ff7a72")
+        add("trash", "Excluir permanentemente…", lambda: self._delete(entry), "Del", color=theme.DANGER_FG)
         menu.exec(self._list.viewport().mapToGlobal(pos))

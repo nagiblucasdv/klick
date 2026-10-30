@@ -2,10 +2,9 @@ from PySide6.QtCore import QPoint, QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QImage
 from PySide6.QtTest import QTest
 
-from klick import theme
 from klick.actions import Action
-from klick.editor import (EditorWindow, Highlight, Marker, Measure, Pixelate, Spotlight, Step, Style, Tool,
-                          render)
+from klick.editor import (PALETTE, Arrow, Box, EditorWindow, Highlight, Marker, Measure, Pixelate, Spotlight,
+                          Step, Stroke, Style, Tool, render)
 
 
 def white(w=200, h=120) -> QImage:
@@ -28,7 +27,7 @@ def drag(widget, start, end):
     QTest.mouseRelease(widget, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, end)
 
 
-def style(color=theme.S500) -> Style:
+def style(color=PALETTE[1]) -> Style:
     return Style(QColor(color), 1.0)
 
 
@@ -126,7 +125,7 @@ def test_tool_keys_switch_tools(qapp):
     assert editor.marker.tool is Tool.ARROW
     assert editor.bar.tools[Tool.ARROW].isChecked()
     QTest.keyClick(editor, Qt.Key.Key_C)
-    assert editor.marker.color.name() == theme.REC
+    assert editor.marker.color.name() == PALETTE[1]
     editor.close()
 
 
@@ -164,17 +163,38 @@ def test_copy_emits_rendered_image(qapp):
     assert image.pixelColor(10, 10).lightness() < 160
 
 
-def test_panel_tabs_follow_the_tool_and_swatches_pick_color(qapp):
+def test_bar_shows_every_tool_and_swatches_pick_color(qapp):
     editor = EditorWindow(white(400, 300))
     editor.show()
-    QTest.keyClick(editor, Qt.Key.Key_R)  # Medir fica na aba Analisar
-    assert editor.bar.tabs.value == "analysis"
-    assert editor.bar.tools[Tool.MEASURE].isVisibleTo(editor.bar)
-    assert not editor.bar.tools[Tool.ARROW].isVisibleTo(editor.bar)
-    editor.bar.swatches[2].click()
-    assert editor.marker.color.name() == theme.OK
+    assert all(b.isVisibleTo(editor.bar) for b in editor.bar.tools.values())  # tudo à vista, sem abas
+    QTest.keyClick(editor, Qt.Key.Key_R)
+    assert editor.bar.tools[Tool.MEASURE].isChecked() and "Medir" in editor.bar.description.text()
+    editor.bar.swatches[3].click()
+    assert editor.marker.color.name() == PALETTE[3]
     editor.bar.size.buttons["thick"].click()
     editor.set_tool(Tool.ARROW)
     drag(editor.canvas, QPoint(10, 10), QPoint(90, 60))
     assert editor.shapes[0].style.width > style().width
     editor.close()
+
+
+def test_box_ellipse_line_and_pen(qapp):
+    marker = Marker(white())
+    for tool in (Tool.BOX, Tool.ELLIPSE, Tool.LINE, Tool.PEN):
+        marker.set_tool(tool)
+        marker.press(QPointF(20, 20))
+        marker.move(QPointF(60, 40))
+        marker.move(QPointF(120, 61))
+        marker.release(QPointF(120, 61))
+    box, ellipse, line, pen = marker.shapes
+    assert isinstance(box, Box) and not box.round_ and isinstance(ellipse, Box) and ellipse.round_
+    assert isinstance(line, Arrow) and not line.head and line.end == QPointF(120, 61)
+    assert isinstance(pen, Stroke) and len(pen.points) == 3
+    out = marker.result()
+    assert out.pixelColor(20, 40) != QColor("white")  # borda esquerda da caixa
+
+
+def test_blur_softens_without_blocks(qapp):
+    out = render(stripes(), [Pixelate(QRectF(0, 0, 120, 60), style(), soft=True)])
+    a, b = out.pixelColor(30, 30), out.pixelColor(31, 30)
+    assert abs(a.red() - b.red()) < 40 and 60 < a.red() < 200

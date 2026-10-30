@@ -22,7 +22,8 @@ VSVersionInfo(
   ffi=FixedFileInfo(filevers={tuple}, prodvers={tuple}),
   kids=[
     StringFileInfo([StringTable("041604B0", [
-      StringStruct("CompanyName", "Klick"),
+      StringStruct("CompanyName", "Lucas Nagib"),
+      StringStruct("LegalCopyright", "Criado por Lucas Nagib"),
       StringStruct("FileDescription", "Klick - captura de tela"),
       StringStruct("FileVersion", "{version}"),
       StringStruct("InternalName", "Klick"),

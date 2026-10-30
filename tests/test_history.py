@@ -86,7 +86,7 @@ def test_window_lists_and_filters(qapp, tmp_path):
     window._search.setText("erro")
     window.refresh()
     assert window._list.count() == 1
-    assert window._tab_buttons[Collection.READING].text().endswith("1")  # contagem segue a busca
+    assert window._tab_buttons[Collection.READING].count == 1  # contagem segue a busca
     window._search.setText("nada disso")
     window.refresh()
     assert window._stack.currentWidget() is window._empty
@@ -100,8 +100,9 @@ def test_collections_split_captures(qapp, tmp_path):
     history.add(image(), "ocr", text="c")
     video = history.add_media(Path("C:/videos/klick_1.mp4"), "video", image(), 12.4)
     history.add_media(Path("C:/videos/klick_2.gif"), "gif", image())
+    history.add(image(), "sql", text="select 1")
     assert history.counts() == {Collection.PRINTS: 2, Collection.RECORDINGS: 1, Collection.GIFS: 1,
-                                Collection.READING: 1}
+                                Collection.READING: 1, Collection.ANALYSIS: 1}
     entry = history.get(video)
     assert entry.collection is Collection.RECORDINGS
     assert entry.media == Path("C:/videos/klick_1.mp4") and entry.duration == 12.4

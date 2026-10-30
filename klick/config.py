@@ -8,11 +8,17 @@ from pathlib import Path
 
 from PySide6.QtCore import QSettings, QStandardPaths
 
+# Atalhos no formato do pynput. O print (PrtSc) só faz imagem; vídeo e GIF ficam no atalho de gravar.
 DEFAULT_HOTKEYS = {
     "capture": "<print_screen>",
+    "record": "<f7>",  # escolhe a área e grava vídeo ou GIF; apertar de novo para
     "ocr": "<ctrl>+<shift>+t",  # OCR direto: seleciona e o texto já vai para o clipboard
-    "record": "<ctrl>+<shift>+r",  # inicia a gravação; apertar de novo para
 }
+HOTKEY_NAMES = {"capture": "Print", "record": "Gravar vídeo ou GIF", "ocr": "Ler texto direto"}
+KEY_LABELS = {"print_screen": "PrtSc", "ctrl": "Ctrl", "ctrl_l": "Ctrl", "ctrl_r": "Ctrl", "shift": "Shift",
+              "shift_l": "Shift", "shift_r": "Shift", "alt": "Alt", "alt_l": "Alt", "alt_r": "Alt Gr",
+              "alt_gr": "Alt Gr", "cmd": "Win", "cmd_l": "Win", "cmd_r": "Win", "page_up": "PgUp",
+              "page_down": "PgDn", "insert": "Ins", "delete": "Del", "pause": "Pause", "scroll_lock": "ScrLk"}
 
 
 def _settings() -> QSettings:
@@ -39,13 +45,17 @@ OPTIONS = {
     "loupe": True,  # lupa de pixels ao selecionar
     "guides": True,  # linhas dos terços enquanto arrasta
     "toasts": True,  # aviso com ações depois de copiar
-    "autosave": False,  # todo print copiado também vai para a pasta Prints
     "precise_ocr": True,  # RapidOCR refina a leitura do Windows
     "record_ask": True,  # pergunta som e qualidade antes de gravar
     "addon_sql": True,  # extra: SQL e tabelas na leitura
 }
 AUDIO = ("none", "system", "mic", "both")
 QUALITY = ("low", "medium", "high")
+
+# Onde cada tipo fica: "folder" grava na pasta do tipo na hora; "gallery" fica só na galeria
+# (temporário) até você mandar guardar, e some depois de TEMP_DAYS.
+SAVE_DEFAULTS = {"prints": "gallery", "reading": "gallery", "recordings": "folder", "gifs": "folder"}
+TEMP_DAYS = (1, 7, 30, 0)  # 0 = nunca apaga
 
 
 def option(name: str) -> bool:
@@ -65,6 +75,15 @@ def set_record_audio(value: str) -> None:
     _settings().setValue("record/audio", value)
 
 
+def record_format() -> str:
+    value = str(_settings().value("record/format", "video"))
+    return value if value in ("video", "gif") else "video"
+
+
+def set_record_format(value: str) -> None:
+    _settings().setValue("record/format", value)
+
+
 def record_quality() -> str:
     value = str(_settings().value("record/quality", "medium"))
     return value if value in QUALITY else "medium"
@@ -72,6 +91,32 @@ def record_quality() -> str:
 
 def set_record_quality(value: str) -> None:
     _settings().setValue("record/quality", value)
+
+
+def save_policy(kind: str) -> str:
+    """ "folder" ou "gallery" para "prints", "reading", "recordings" ou "gifs"."""
+    settings = _settings()
+    value = settings.value(f"save/{kind}")
+    if value is None and kind == "prints" and _bool(settings.value("options/autosave"), False):
+        return "folder"  # quem ligou "salvar todo print" na versão anterior
+    return str(value) if value in ("folder", "gallery") else SAVE_DEFAULTS[kind]
+
+
+def set_save_policy(kind: str, value: str) -> None:
+    _settings().setValue(f"save/{kind}", value)
+
+
+def temp_days() -> int:
+    """Dias que o que está só na galeria fica antes de ser apagado (0 = nunca)."""
+    try:
+        value = int(_settings().value("save/temp_days", 7))
+    except (TypeError, ValueError):
+        return 7
+    return value if value in TEMP_DAYS else 7
+
+
+def set_temp_days(days: int) -> None:
+    _settings().setValue("save/temp_days", days)
 
 
 def default_save_dir() -> Path:
@@ -96,6 +141,24 @@ def folder(kind: str) -> Path:
 def hotkeys() -> dict[str, str]:
     settings = _settings()
     return {name: str(settings.value(f"hotkeys/{name}", combo)) for name, combo in DEFAULT_HOTKEYS.items()}
+
+
+def set_hotkey(name: str, combo: str) -> None:
+    _settings().setValue(f"hotkeys/{name}", combo)
+
+
+def hotkey_label(combo: str) -> str:
+    """ "<ctrl>+<shift>+t" -> "Ctrl+Shift+T"; "<print_screen>" -> "PrtSc"; "<118>" (código) -> "Tecla 118"."""
+    parts = []
+    for part in combo.split("+"):
+        key = part.strip("<>")
+        if key.isdigit():
+            parts.append(f"Tecla {key}")
+        elif key in KEY_LABELS:
+            parts.append(KEY_LABELS[key])
+        else:
+            parts.append(key.upper() if len(key) <= 3 else key.replace("_", " ").title())
+    return "+".join(parts)
 
 
 def ocr_language() -> str | None:

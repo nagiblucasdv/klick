@@ -1,78 +1,80 @@
 # Klick
 
 Ferramenta de captura de tela no estilo Lightshot: tudo começa selecionando uma área da tela; depois você escolhe a ação.
-O plano completo está em [docs/PLANO.md](docs/PLANO.md).
+Criado por Lucas Nagib. O plano completo está em [docs/PLANO.md](docs/PLANO.md).
 
 ## O que faz
 
-Aperte **PrintScreen** (ou clique no ícone da bandeja), arraste a área e escolha na barra:
+**Print (`PrtSc`)** é só imagem. Arraste a área e escolha na barra:
 
 | Ação | Atalho na seleção | O que acontece |
 | --- | --- | --- |
 | Copiar | `Ctrl+C`, `Enter`, duplo clique | Imagem vai para o clipboard |
-| Ler | `Ctrl+T` | Abre a leitura: arraste sobre as palavras e copie só o trecho, como no Google Lens |
-| Marcar | `Ctrl+E` | Marca o print ali mesmo, sem abrir janela (ferramentas abaixo) |
 | Salvar | `Ctrl+S` | Salva PNG/JPG (sugere `Imagens/Klick/Prints/klick_<data>.png`) |
+| Editar | `Ctrl+E` | Edita o print ali mesmo, sem abrir janela (ferramentas abaixo) |
+| Ler | `Ctrl+T` | Abre a leitura: arraste sobre as palavras e copie só o trecho, como no Google Lens |
 | Pesquisar | `Ctrl+L` | Pesquisa a imagem no Google Lens, no navegador padrão |
-| SQL | `Ctrl+Q` | Abre a janela de SQL: consulta formatada ou grade em Excel, CSV, INSERT e UPDATE |
-| Gravar | `Ctrl+R` | Grava a área em MP4, com ou sem som |
-| GIF | `Ctrl+G` | Grava a área em GIF, para colar em chat ou ticket |
+| Análise | `Ctrl+Q` | Abre a Análise: consulta SQL, JSON ou grade de resultado |
 
-Arrastar dentro da seleção move a área; botão direito limpa; `Esc` cancela. A lupa junto ao cursor mostra a posição
-e a cor do pixel; `C` copia o código da cor.
+**Gravar (`F7`)** seleciona a área e abre o painel de gravação: **Vídeo (MP4) ou GIF**, som (sem som, computador,
+microfone ou ambos) e qualidade (baixa 15 fps, média 30 fps, alta 60 fps). `Enter` começa e a escolha vira o padrão;
+apertar o atalho de novo para. A moldura vermelha e o controle com o tempo ficam fora do vídeo. O arquivo já fica no
+clipboard como arquivo, então é só colar no chat. O som do computador é gravado pelo loopback do Windows.
 
-**Atalhos globais**
+Arrastar dentro da seleção move a área; um clique solto fora dela não apaga a seleção (só um arrasto começa outra);
+botão direito limpa; `Esc` cancela. A lupa junto ao cursor mostra a posição e a cor do pixel; `C` copia o código da cor.
 
-- `PrintScreen`: capturar
-- `Ctrl+Shift+T`: **OCR direto** (selecionou, soltou, o texto já está no clipboard)
-- `Ctrl+Shift+R`: gravar área / parar gravação
+**Atalhos globais** (todos trocam em Configurações › Atalhos, clicando e apertando a combinação; vale tecla do FN do
+notebook):
 
-**Depois de capturar** aparece um aviso no canto da tela com a miniatura e atalhos para marcar, ler ou salvar.
+- `PrtSc`: print
+- `F7`: gravar vídeo ou GIF / parar a gravação
+- `Ctrl+Shift+T`: **ler texto direto** (selecionou, soltou, o texto já está no clipboard)
 
-**Gravação:** antes de começar, um painel ao lado da seleção pergunta se vai ter som (sem som, do computador,
-microfone ou os dois) e a qualidade (baixa 15 fps, média 30 fps, alta 60 fps); `Enter` começa e a escolha vira o
-padrão. Durante a gravação aparece uma moldura vermelha e um controle com o tempo e o botão "Parar". Os dois ficam
-fora do vídeo. O arquivo vai para `Gravações/` (ou `GIFs/`) e já fica no clipboard como arquivo, então é só colar no
-chat. O som do computador é gravado pelo loopback do Windows, sem precisar ligar "Mixagem estéreo".
+**Depois de copiar** aparece um aviso no canto da tela com a miniatura e atalhos para editar, ler, pesquisar e guardar.
 
-**Marcar:** o painel tem duas abas, Destacar e Analisar, com o nome, a tecla e o que cada ferramenta faz, além das
-cores e da espessura (fina, média, grossa). Para destacar, `D` destaque (escurece o resto), `M` marca-texto, `A` seta, `N` passo (1, 2, 3) e `T`
-texto (digitado direto); para analisar, `L` lupa, `P` ocultar, `R` medir em pixels e `I` conta-gotas. `C` troca a cor,
-`Ctrl+Z` desfaz, `Enter` copia, `Ctrl+S` salva e `Esc` volta para a seleção. O ocultar usa blocos grandes de propósito,
-para não dar para recuperar CPF ou CNPJ.
+**Editar imagem:** uma barra só, com todas as ferramentas à vista e o que cada uma faz embaixo. Formas: `B` caixa, `O`
+elipse, `A` seta, `L` linha. Destacar: `D` destaque (escurece o resto), `M` marca-texto, `F` caneta, `N` número (1, 2,
+3) e `T` texto (digitado direto). Proteger e analisar: `P` pixelar, `U` desfocar, `Z` lupa, `R` medir em pixels e `I`
+conta-gotas. Sete cores (`C` troca), três espessuras, `Ctrl+Z` desfaz, `Enter` copia, `Ctrl+S` salva e `Esc` volta. O
+pixelar usa blocos grandes de propósito, para não dar para recuperar CPF ou CNPJ.
 
-**Galeria:** tudo que você copia, salva, marca, lê ou grava fica guardado, em quatro coleções: Prints, Gravações, GIFs
-e Leitura. A busca procura no texto que aparecia no print ("erro 500", "atencao" acha "Atenção"). `Enter` copia de
-novo (gravações e GIFs vão como arquivo); na Leitura, abre o texto para selecionar. `Ctrl`+clique escolhe vários e
-`Del` exclui de vez (gravações e GIFs: o arquivo também é apagado; "Remover da galeria" no menu mantém o arquivo). O
-botão de pasta abre a pasta da coleção: `Prints/`, `Gravações/`, `GIFs/` e `Leitura/` dentro de `Imagens/Klick`. O
-histórico fica em `%LOCALAPPDATA%\Klick\history` (as últimas 1000 capturas).
+**Onde fica salvo:** cada tipo escolhe "na pasta" ou "só na galeria". Por padrão prints e leituras ficam só na galeria
+e gravações e GIFs vão para a pasta. O que está só na galeria some depois de 7 dias (1, 7, 30 dias ou nunca); guardar
+na pasta (`Ctrl+S` na galeria, ou "Guardar" no aviso) tira do prazo: o print vira PNG em `Prints/`, a leitura vira `.txt`
+em `Leitura/` e a gravação sai da pasta interna da galeria para `Gravações/` ou `GIFs/`.
+
+**Galeria:** coleções Tudo, Prints, Gravações, GIFs, Leituras e Análises, com o selo "some em N dias" ou "na pasta" em
+cada cartão e o filtro "só na galeria". A busca procura no texto que aparecia no print ("erro 500", "atencao" acha
+"Atenção"). `Enter` copia de novo (gravações e GIFs vão como arquivo); em Leituras e Análises, abre o texto. `Ctrl+K`
+abre a paleta de comandos: capturar, gravar, ler, ir para uma coleção, guardar, configurações e as capturas que batem
+com o que você digitou. `Del` exclui de vez. O histórico fica em `%LOCALAPPDATA%\Klick\history` (as últimas 1000
+capturas).
 
 **Leitura:** além de copiar, `Pesquisar` busca o trecho no Google, `Google Lens` pesquisa a imagem e `Salvar .txt`
-grava o texto em `Leitura/`.
+grava o texto em `Leitura/`. Quando o texto é SQL, JSON ou uma grade, aparece "Abrir na Análise".
 
-**SQL:** janela própria para consulta e grade de resultado lidas de um print. Abre com `Ctrl+Q` na seleção, por "Ler
-SQL ou tabela" no menu da bandeja, por "Abrir no SQL" na galeria ou pelos botões SQL e Tabela da leitura. Lê com os
-dois motores (o RapidOCR ampliado e com as cores invertidas em fundo escuro, como num editor) e fica com a leitura mais
-limpa.
+**Análise:** janela própria para o que foi lido de um print, com o painel da direita explicando o que achou. Abre com
+`Ctrl+Q` na seleção, pela bandeja, pela galeria ou pela leitura, já na aba certa. Lê com os dois motores (o RapidOCR
+ampliado e com as cores invertidas em fundo escuro, como num editor) e fica com a leitura mais limpa.
 
-- **Consulta:** o SQL consertado (`FR0M`, aspas curvas, `c. codcli`), formatado e colorido, editável; ao lado o tipo
-  (SELECT, UPDATE…), as tabelas citadas e o print. "Formatar" refaz, "Texto lido" volta ao original.
-- **Tabela:** a grade lida, editável (`Del` apaga linhas), com o nome da tabela, "primeira linha é o cabeçalho" e
-  "vírgula decimal" (1.240,50 vira 1240.50). Copia como Excel, CSV (`;`), `INSERT` ou `UPDATE` (escolhendo a coluna do
-  `WHERE`), com prévia ao vivo. "Salvar arquivo" grava `.sql`, `.csv` ou `.txt` em `Leitura/`.
+- **Consulta SQL:** consertada (`FR0M`, aspas curvas, `c. codcli`), formatada e colorida; ao lado o tipo, as tabelas,
+  as junções, os filtros do `WHERE`, o agrupamento e a ordem.
+- **JSON:** consertado (aspas curvas ou simples, vírgula sobrando, `True`/`None`, chave sem aspas), validado com a linha
+  e a coluna do erro, formatado ou compactado; ao lado as chaves, os itens, a profundidade e os campos.
+- **Tabela:** a grade editável (`Del` apaga linhas), com nome da tabela, "1ª linha é cabeçalho" e "vírgula decimal".
+  Copia como Excel, CSV (`;`), `INSERT` ou `UPDATE` (escolhendo a coluna do `WHERE`). Ao lado, o resumo de cada coluna:
+  tipo, preenchidos, diferentes e, nos números, soma, média, mínimo e máximo ("Copiar resumo").
 
-O extra **SQL e tabelas** (ligado por padrão) mostra os botões SQL e Tabela na leitura quando o texto parece consulta
-ou grade.
+**Configurações** (engrenagem na galeria ou na bandeja): atalhos, onde salvar e por quanto tempo, pasta do Klick, lupa,
+linhas de terço, aviso depois de copiar, perguntar antes de gravar e os padrões de formato/som/qualidade, leitura
+precisa, Análise, guardar histórico e abrir com o Windows. As mudanças valem na hora.
 
-**Configurações** (engrenagem na galeria): lupa de pixels, guias de terço, aviso depois de copiar, salvar todo print
-na pasta, leitura precisa, perguntar antes de gravar e o som/qualidade padrão, pasta do Klick, guardar histórico,
-abrir com o Windows e os extras. As mudanças valem na hora.
-
-**Visual:** a identidade é a "Painel": a estrutura do Windows 11 (barra lateral como no Explorador) com cara de
-instrumento. Aço azulado no corpo, laranja só nas ações, leituras (tamanho, hora, contagens) em ciano e fonte mono,
-botões em caixa alta. Fontes Barlow, Barlow Condensed e JetBrains Mono, que vão junto com o app. Cores e estilos ficam
-em [klick/theme.py](klick/theme.py).
+**Visual:** a identidade é a "Névoa": vidro claro sobre areia, verde-petróleo só nas ações, vermelho só para gravar e
+âmbar para o que é temporário. Uma família (Manrope) com a hierarquia feita pelo peso, números em JetBrains Mono, cantos
+arredondados e botões em pílula. Por cima da tela, os painéis mostram a tela congelada desfocada por trás. O ícone é o
+selo com a cabeça do corvo, com o olho na forma da mira de captura. Cores e estilos ficam em
+[klick/theme.py](klick/theme.py).
 
 ## Preferências
 
@@ -80,13 +82,12 @@ Ficam em `HKCU\Software\Klick\Klick`. A maioria muda pela tela de configuraçõe
 
 | Chave | Padrão | Para quê |
 | --- | --- | --- |
-| `save_dir` | `Imagens\Klick` | Pasta do Klick; cada tipo fica numa subpasta |
-| `hotkeys/capture`, `hotkeys/ocr`, `hotkeys/record` | ver acima | Formato do pynput, ex.: `<ctrl>+<alt>+s` |
 | `ocr/language` | perfil do Windows | Forçar idioma do OCR, ex.: `pt-BR` |
-| `record/ffmpeg` | `ffmpeg` do PATH | Caminho do ffmpeg |
-| `record/audio`, `record/quality` | `none`, `medium` | Som e qualidade padrão da gravação |
-| `options/*` | ver configurações | Lupa, guias, avisos, extras etc. |
-| `history/enabled`, `history/max_items` | `true`, `1000` | Histórico |
+| `record/ffmpeg` | `ffmpeg` junto do app ou do PATH | Caminho do ffmpeg |
+| `history/max_items` | `1000` | Quantas capturas a galeria guarda |
+
+As outras (`save_dir`, `hotkeys/*`, `save/*`, `record/*`, `options/*`, `history/enabled`) são as da tela de
+configurações. Os atalhos usam o formato do pynput (`<ctrl>+<alt>+s`, `<f7>`, ou `<255>` para o código de uma tecla).
 
 ## Linux
 
@@ -105,23 +106,23 @@ o ffmpeg de verdade, com uma fonte de vídeo sintética no lugar da tela, e são
 
 | Módulo | Papel |
 | --- | --- |
-| `klick/app.py` | Entrada, bandeja, atalhos; liga a seleção às ações |
+| `klick/app.py` | Entrada, bandeja, atalhos; liga a seleção às ações e aplica onde salvar |
 | `klick/capture.py` | Captura de cada monitor (mss, com fallback do Qt) e conversão lógico → físico |
-| `klick/overlay.py` | Overlay de seleção, barra de ações e `CaptureSession` (um overlay por monitor) |
+| `klick/overlay.py` | Overlay de seleção (modos print e gravar), barra de ações e `CaptureSession` |
 | `klick/actions.py` | Copiar imagem/texto/arquivo e salvar |
-| `klick/ocr.py` | OCR via Windows.Media.Ocr, numa thread própria |
-| `klick/editor.py` | Ferramentas de marcar (`Marker`), usadas na captura e na janela de marcar |
+| `klick/ocr.py` | OCR via Windows.Media.Ocr e RapidOCR, em threads próprias |
+| `klick/editor.py` | Editar imagem (`Marker` e `EditBar`), usado na captura e na janela de editar |
 | `klick/reader.py` | Leitura estilo Lens: palavras com posição, seleção por arraste |
 | `klick/lens.py` | Pesquisa no Google Lens (página local que envia a imagem) e no Google |
-| `klick/sql.py` | SQL e tabelas: detecta, conserta, formata, colore e monta a grade (Excel, CSV, INSERT, UPDATE) |
-| `klick/sql_ui.py` | Janela de SQL (abas Consulta e Tabela) |
+| `klick/sql.py` | SQL, JSON e tabelas: detecta, conserta, formata, colore, resume e converte |
+| `klick/sql_ui.py` | Janela de Análise (abas Consulta SQL, JSON e Tabela) |
 | `klick/audio.py` | Som do computador na gravação (loopback do WASAPI) |
-| `klick/settings_ui.py` | Tela de configurações |
-| `klick/theme.py`, `icons.py`, `widgets.py` | Identidade Visor: cores, fontes, ícones, botões, aviso e confirmação |
+| `klick/settings_ui.py` | Configurações, com a gravação de atalhos |
+| `klick/theme.py`, `icons.py`, `icon.py`, `widgets.py` | Identidade Névoa: cores, fontes, ícones, o corvo, botões, aviso |
 | `klick/recorder.py` | Gravação com ffmpeg (gdigrab/x11grab) e conversão para GIF |
-| `klick/recording_ui.py` | Moldura e controles da gravação, excluídos do vídeo |
-| `klick/history.py`, `history_ui.py` | Histórico em SQLite com busca FTS5 e a galeria em quatro coleções |
-| `klick/hotkeys.py` | Atalhos globais via pynput |
+| `klick/recording_ui.py` | Painel de gravar (vídeo ou GIF) e a moldura e os controles, excluídos do vídeo |
+| `klick/history.py`, `history_ui.py` | Histórico em SQLite com busca FTS5, temporários e a galeria com Ctrl+K |
+| `klick/hotkeys.py` | Atalhos globais via pynput e o gravador de atalho |
 | `klick/config.py` | Preferências (QSettings) |
 | `klick/single.py` | Instância única: abrir de novo repassa o comando para o Klick que já está na bandeja |
 
@@ -135,7 +136,8 @@ winget install Gyan.FFmpeg.Essentials JRSoftware.InnoSetup
 Gera `dist\Klick-Setup-<versão>.exe`: instala em `%LOCALAPPDATA%\Programs\Klick` sem pedir administrador, com o
 ffmpeg junto, atalho no Menu Iniciar, opção de iniciar com o Windows e de liberar a tecla PrintScreen da Ferramenta de
 Captura. O script cria um venv próprio (`.venv-build`, Python 3.12), roda os testes, o PyInstaller
-([packaging/klick.spec](packaging/klick.spec)) e o Inno Setup ([packaging/klick.iss](packaging/klick.iss)).
+([packaging/klick.spec](packaging/klick.spec), que deixa de fora o que vem junto sem uso) e o Inno Setup
+([packaging/klick.iss](packaging/klick.iss)).
 
 Para adicionar uma ação: crie o valor em `Action`, o botão em `Toolbar` e o tratamento em `KlickApp._on_finished`.
 Com `CaptureSession(shots, direct_action=...)` a ação roda assim que o mouse é solto, sem mostrar a barra.

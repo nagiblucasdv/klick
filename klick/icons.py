@@ -1,4 +1,4 @@
-"""Ícones do Visor em SVG (traço 1.8, cantos retos), pintados na cor pedida."""
+"""Ícones em SVG (traço 1.8, pontas redondas), pintados na cor pedida."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from PySide6.QtSvg import QSvgRenderer
 
 from klick import theme
 
-_S = 'fill="none" stroke="currentColor" stroke-width="1.8"'
+_S = 'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"'
 PATHS = {
     "copy": f'<rect x="8" y="8" width="12" height="12" rx="1.5" {_S}/><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8" {_S}/>',
     "read": f'<path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4" {_S}/><path d="M8.5 9h7M12 9v7" {_S}/>',
@@ -45,6 +45,18 @@ PATHS = {
     "table": f'<rect x="3" y="4.5" width="18" height="15" rx="1.5" {_S}/><path d="M3 9.5h18M3 14.5h18M9.5 4.5v15" {_S}/>',
     "globe": f'<circle cx="12" cy="12" r="8" {_S}/><path d="M4 12h16M12 4c2.5 2.5 2.5 13.5 0 16M12 4c-2.5 2.5-2.5 13.5 0 16" {_S}/>',
     "sound": f'<path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z" {_S} stroke-linejoin="round"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" {_S}/>',
+    "box": f'<rect x="4" y="6" width="16" height="12" rx="2" {_S}/>',
+    "ellipse": f'<ellipse cx="12" cy="12" rx="8" ry="6" {_S}/>',
+    "line": f'<path d="M5 19 19 5" {_S}/>',
+    "pen": f'<path d="M3 15.5c2.2-3 4-3 5.5-.5s3.3 2.5 5.5-.5 3.6-3 7 0" {_S}/>',
+    "blur": f'<circle cx="12" cy="12" r="7.5" {_S} stroke-dasharray="2.2 2.6"/><circle cx="12" cy="12" r="3" fill="currentColor" opacity=".35"/>',
+    "keyboard": f'<rect x="2.5" y="6" width="19" height="12" rx="2" {_S}/><path d="M6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M8 14h8" {_S}/>',
+    "keep": f'<path d="M6.5 4h11v16.5L12 16.5l-5.5 4z" {_S}/>',
+    "command": f'<path d="M9 6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3z" {_S}/>',
+    "json": f'<path d="M9 4H8a2 2 0 0 0-2 2v3.5a2 2 0 0 1-2 2 2 2 0 0 1 2 2V18a2 2 0 0 0 2 2h1M15 4h1a2 2 0 0 1 2 2v3.5a2 2 0 0 0 2 2 2 2 0 0 0-2 2V18a2 2 0 0 1-2 2h-1" {_S}/>',
+    "sum": f'<path d="M17 5H7l5.5 7L7 19h10" {_S}/>',
+    "analysis": f'<path d="M4 20V10M10 20V4M16 20v-7M21 20H3" {_S}/>',
+
 }
 
 

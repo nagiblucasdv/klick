@@ -1,4 +1,4 @@
-"""Ponto de entrada: ícone na bandeja, atalho global e sessão de captura."""
+"""Ponto de entrada: ícone na bandeja, atalhos globais e sessão de captura."""
 
 from __future__ import annotations
 
@@ -10,11 +10,12 @@ from pathlib import Path
 
 import shiboken6
 from PySide6.QtCore import QObject, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QCursor, QDesktopServices, QGuiApplication, QImage, QKeySequence
-from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QMenu, QSystemTrayIcon, QWidget, QWidgetAction
+from PySide6.QtGui import QAction, QCursor, QDesktopServices, QGuiApplication, QImage
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QMenu, QSystemTrayIcon, QVBoxLayout, QWidget, \
+    QWidgetAction
 
-from klick import __version__, config, icons, lens, ocr, theme
-from klick.actions import Action, copy_file, copy_image, copy_text, save_image, store_image
+from klick import __author__, __version__, config, icons, lens, ocr, theme
+from klick.actions import Action, copy_file, copy_image, copy_text, save_image, store_image, store_text
 from klick.capture import Selection, grab_screens
 from klick.editor import EditorWindow
 from klick.history import History
@@ -26,14 +27,15 @@ from klick.recorder import Recorder, RecordFormat
 from klick.reader import ReaderWindow
 from klick.recording_ui import SOUND_OPTIONS, RecordingIndicator
 from klick.settings_ui import SettingsDialog
-from klick.sql_ui import SqlWindow
 from klick.single import InstanceServer, send_to_running
+from klick.sql_ui import AnalysisWindow
 from klick.widgets import Toast
 
 log = logging.getLogger("klick")
 
 PREVIEW_CHARS = 60
 RECORD_START_DELAY_MS = 120  # deixa o overlay sumir antes do primeiro frame
+EXPIRE_EVERY_MS = 60 * 60 * 1000  # confere de hora em hora o que já venceu na galeria
 
 
 class KlickApp(QObject):
@@ -46,8 +48,8 @@ class KlickApp(QObject):
         self._session: CaptureSession | None = None
         self._ocr_pending = False
         self._editors: list[EditorWindow] = []
-        self._readers: list[ReaderWindow] = []
-        self._recording: tuple[QImage, RecordFormat] | None = None
+        self._readers: list[QWidget] = []
+        self._recording: tuple[QImage, RecordFormat, bool] | None = None  # miniatura, formato, temporário
         self._history = history if history is not None else History()
         self._history_window: HistoryWindow | None = None
 
@@ -61,41 +63,24 @@ class KlickApp(QObject):
 
         self._tray = QSystemTrayIcon(app_icon(), self)
         self._tray.setToolTip(f"Klick {__version__}")
-        menu = QMenu()
-        menu.addAction(self._menu_header(menu))
-        self._menu_item(menu, "spot", "Capturar área", "Print", lambda: self.start_capture())
-        self._menu_item(menu, "read", "Ler texto", "Ctrl+Shift+T", lambda: self.start_capture(Action.OCR))
-        self._menu_item(menu, "sql", "Ler SQL ou tabela", None, lambda: self.start_capture(Action.SQL))
-        self._record_action = self._menu_item(menu, "rec", "Gravar área", "Ctrl+Shift+R",
-                                              lambda: self.toggle_recording(), color=theme.REC)
-        menu.addSeparator()
-        self._menu_item(menu, "image", "Galeria", None, lambda: self.show_history())
-        keep = self._menu_item(menu, "folder", "Guardar histórico", None, None)
-        keep.setCheckable(True)
-        keep.setChecked(config.history_enabled())
-        keep.toggled.connect(config.set_history_enabled)
-        # O estilo do menu esconde a marca de seleção; o ícone mostra se está ligado.
-        show_state = lambda on: keep.setIcon(  # noqa: E731
-            icons.icon("check", theme.S500, size=16) if on else icons.icon("close", theme.G500, size=16))
-        keep.toggled.connect(show_state)
-        show_state(keep.isChecked())
-        self._keep_action = keep
-        menu.aboutToShow.connect(lambda: keep.setChecked(config.history_enabled()))
-        menu.addSeparator()
-        self._menu_item(menu, "power", "Sair", None, lambda: self.quit())
-        self._menu = menu  # mantém referência viva
-        self._tray.setContextMenu(menu)
+        self._menu = QMenu()  # mantém referência viva
+        self._build_menu()
+        self._tray.setContextMenu(self._menu)
         self._tray.activated.connect(self._on_tray_activated)
 
         self._hotkeys = HotkeyListener(config.hotkeys())
         self._hotkeys.triggered.connect(self._on_hotkey)
         self._ocrDone.connect(self._on_ocr_done)
 
+        self._expire_timer = QTimer(self, interval=EXPIRE_EVERY_MS, timeout=self.expire)
+
     def run(self) -> None:
         if QSystemTrayIcon.isSystemTrayAvailable():
             self._tray.show()
         if self._hotkeys.start():
             log.info("Atalhos globais: %s", config.hotkeys())
+        self.expire()
+        self._expire_timer.start()
 
     def start_capture(self, direct_action: Action | None = None) -> None:
         if self._session is not None:
@@ -109,10 +94,23 @@ class KlickApp(QObject):
         elif not self._recorder.busy:
             self.start_capture(Action.RECORD)
 
+    def expire(self) -> None:
+        """Apaga da galeria o que era temporário e passou do prazo."""
+        try:
+            gone = self._history.expire(config.temp_days())
+        except Exception:  # noqa: BLE001 - limpeza nunca derruba o app
+            log.warning("Falha ao limpar a galeria", exc_info=True)
+            return
+        if gone:
+            log.info("%d itens temporários saíram da galeria", gone)
+
     def show_history(self) -> None:
         if self._history_window is None:
             window = HistoryWindow(self._history)
             window.captureRequested.connect(lambda: self.start_capture())
+            window.recordRequested.connect(self.toggle_recording)
+            window.ocrRequested.connect(lambda: self.start_capture(Action.OCR))
+            window.analysisRequested.connect(lambda: self.start_capture(Action.SQL))
             window.readRequested.connect(lambda image: self._open_reader(image, record=False))
             window.markRequested.connect(lambda image: self._open_editor_image(image))
             window.sqlRequested.connect(lambda image: self._open_sql(image, record=False))
@@ -123,19 +121,49 @@ class KlickApp(QObject):
         self._history_window.raise_()
         self._history_window.activateWindow()
 
-    def show_settings(self) -> None:
-        dialog = SettingsDialog(self._history_window)
+    def show_settings(self, section: str = "") -> None:
+        dialog = SettingsDialog(self._history_window, section)
         dialog.historyToggled.connect(lambda on: self._history_window and self._history_window.refresh())
+        dialog.hotkeysPaused.connect(self._pause_hotkeys)
+        dialog.hotkeysChanged.connect(self._reload_hotkeys)
+        dialog.savingChanged.connect(self.expire)
         dialog.exec()
+        self._build_menu()
+
+    def _pause_hotkeys(self, paused: bool) -> None:
+        """Enquanto um atalho novo é gravado nas configurações, os atuais não disparam."""
+        if paused:
+            self._hotkeys.stop()
+        else:
+            self._hotkeys.restart(config.hotkeys())
+
+    def _reload_hotkeys(self) -> None:
+        self._hotkeys.restart(config.hotkeys())
+        self._build_menu()
+
+    def _build_menu(self) -> None:
+        menu = self._menu
+        menu.clear()
+        keys = {name: config.hotkey_label(combo) for name, combo in config.hotkeys().items()}
+        menu.addAction(self._menu_header(menu))
+        self._menu_item(menu, "spot", "Capturar área", keys["capture"], lambda: self.start_capture())
+        self._record_action = self._menu_item(menu, "rec", "Gravar vídeo ou GIF", keys["record"],
+                                              lambda: self.toggle_recording(), color=theme.REC)
+        if self._recorder.recording:
+            self._record_action.setText("Parar gravação")
+        self._menu_item(menu, "read", "Ler texto", keys["ocr"], lambda: self.start_capture(Action.OCR))
+        self._menu_item(menu, "analysis", "Análise: SQL, JSON ou tabela", None, lambda: self.start_capture(Action.SQL))
+        menu.addSeparator()
+        self._menu_item(menu, "image", "Galeria", None, lambda: self.show_history())
+        self._menu_item(menu, "gear", "Configurações", None, lambda: self.show_settings())
+        menu.addSeparator()
+        self._menu_item(menu, "power", "Sair", None, lambda: self.quit())
 
     @staticmethod
     def _menu_item(menu: QMenu, icon_name: str, text: str, shortcut: str | None, slot,
-                   color: str = theme.G300) -> QAction:
-        action = QAction(icons.icon(icon_name, color, size=16), text, menu)
-        if shortcut:
-            # Só para mostrar o atalho global no menu; quem dispara é o HotkeyListener.
-            action.setShortcut(QKeySequence(shortcut))
-            action.setShortcutVisibleInContextMenu(True)
+                   color: str = theme.A300) -> QAction:
+        # O atalho vai no texto (depois do \t) só para ser mostrado; quem dispara é o HotkeyListener.
+        action = QAction(icons.icon(icon_name, color, size=16), f"{text}\t{shortcut}" if shortcut else text, menu)
         if slot is not None:
             action.triggered.connect(slot)
         menu.addAction(action)
@@ -148,17 +176,20 @@ class KlickApp(QObject):
         row.setContentsMargins(9, 6, 9, 8)
         row.setSpacing(10)
         logo = QLabel()
-        logo.setPixmap(app_icon().pixmap(22, 22))
-        name = QLabel("Klick")
-        name.setFont(theme.font(14, 750, 120))
+        logo.setPixmap(app_icon().pixmap(28, 28))
+        words = QVBoxLayout()
+        words.setSpacing(0)
+        name = QLabel(f"Klick <span style='color:{theme.G400}; font-weight:500;'>{__version__}</span>")
+        name.setFont(theme.font(14, 800))
         name.setStyleSheet(f"color: {theme.PAPER};")
-        version = QLabel(__version__)
-        version.setFont(theme.font(11, 400, mono=True))
-        version.setStyleSheet(f"color: {theme.G400};")
+        sign = QLabel(f"por {__author__}")
+        sign.setFont(theme.font(11, 500))
+        sign.setStyleSheet(f"color: {theme.G400};")
+        words.addWidget(name)
+        words.addWidget(sign)
         row.addWidget(logo)
-        row.addWidget(name)
+        row.addLayout(words)
         row.addStretch(1)
-        row.addWidget(version)
         action = QWidgetAction(menu)
         action.setDefaultWidget(header)
         action.setEnabled(False)
@@ -179,8 +210,9 @@ class KlickApp(QObject):
 
     def announce(self) -> None:
         """Avisa que o Klick está na bandeja; sem isso, abrir pelo Menu Iniciar parece não fazer nada."""
-        key = config.hotkeys()["capture"].replace("<", "").replace(">", "").replace("_", " ").title()
-        self._show_toast(Toast("Klick está na bandeja", f"Aperte {key} para capturar", kind="info"))
+        keys = config.hotkeys()
+        self._show_toast(Toast("Klick está na bandeja", f"{config.hotkey_label(keys['capture'])} captura · "
+                                                        f"{config.hotkey_label(keys['record'])} grava", kind="info"))
 
     def quit(self) -> None:
         if self._recorder.recording:
@@ -231,25 +263,28 @@ class KlickApp(QObject):
 
     def _deliver(self, action: Action, image: QImage, source: str | None = None) -> None:
         """Copia ou salva a imagem final (direto da seleção ou vinda do editor)."""
+        saved = None
         try:
             if action is Action.COPY:
                 copy_image(image)
-                stored = store_image(image) if config.option("autosave") else None
-                where = f"Prints/{stored.name}" if stored else "Prints"
-                if config.option("toasts"):
-                    self._show_toast(self._capture_toast("Copiado", f"{image.width()} × {image.height()} · {where}",
-                                                         image))
+                if config.save_policy("prints") == "folder":
+                    saved = store_image(image)
             elif action is Action.SAVE:
-                path = save_image(image)
-                if not path:
+                saved = save_image(image)
+                if not saved:
                     return
-                toast = Toast("Salvo", path.name, image, [("folder", "Mostrar na pasta", "folder")])
-                toast.actionTriggered.connect(lambda key: self._reveal(path))
+                toast = Toast("Salvo", saved.name, image, [("folder", "Mostrar na pasta", "folder")])
+                toast.actionTriggered.connect(lambda key: self._reveal(saved))
                 self._show_toast(toast)
         except OSError as exc:
             self._warn(f"{exc}\nEscolha outra pasta e tente de novo.")
             return
-        self._history.add(image, source or action.value)
+        entry_id = self._history.add(image, source or action.value, temp=saved is None, saved=saved)
+        if action is Action.COPY and config.option("toasts"):
+            days = config.temp_days()
+            where = f"Prints/{saved.name}" if saved else (f"na galeria por {days} dias" if days else "na galeria")
+            self._show_toast(self._capture_toast("Copiado", f"{image.width()} × {image.height()} · {where}",
+                                                 image, entry_id))
 
     # --- editor ------------------------------------------------------------
 
@@ -270,14 +305,25 @@ class KlickApp(QObject):
             self._editors.remove(editor)
         self._maybe_quit()
 
-    # --- leitura -----------------------------------------------------------
+    # --- leitura e análise -------------------------------------------------
+
+    def _record_text(self, image: QImage, source: str, text: str) -> None:
+        """Guarda o que foi lido na galeria (e na pasta Leitura, se for o caso)."""
+        saved = None
+        if config.save_policy("reading") == "folder" and text.strip():
+            try:
+                saved = store_text(text)
+            except OSError:
+                log.warning("Não foi possível salvar a leitura", exc_info=True)
+        self._history.add(image, source, text=text, temp=saved is None, saved=saved)
 
     def _open_reader(self, image: QImage, record: bool = True) -> ReaderWindow:
-        """Abre a leitura estilo Lens. Da captura, o resultado vai para a coleção Leitura."""
+        """Abre a leitura estilo Lens. Da captura, o resultado vai para a coleção Leituras."""
         reader = ReaderWindow(image)
         if record:
             reader.recognized.connect(
-                lambda result: result.words and self._history.add(image, Action.OCR.value, text=result.text))
+                lambda result: result.words and self._record_text(image, Action.OCR.value, result.text))
+        reader.analysisRequested.connect(lambda result, tab: self._open_sql(image, record=False, result=result, tab=tab))
         reader.destroyed.connect(lambda: self._on_reader_closed(reader))
         self._readers.append(reader)
         reader.show()
@@ -285,11 +331,11 @@ class KlickApp(QObject):
         reader.activateWindow()
         return reader
 
-    def _open_sql(self, image: QImage, record: bool = True) -> SqlWindow:
-        """Janela de SQL. Da captura, o que foi lido vai para a coleção Leitura."""
-        window = SqlWindow(image)
+    def _open_sql(self, image: QImage, record: bool = True, result=None, tab: str | None = None) -> AnalysisWindow:
+        """Análise (SQL, JSON e tabelas). Da captura, o que foi lido vai para a coleção Análises."""
+        window = AnalysisWindow(image, result, tab)
         if record:
-            window.recognized.connect(lambda result: self._history.add(image, Action.OCR.value, text=result.text))
+            window.recognized.connect(lambda r: r.words and self._record_text(image, "sql", r.text))
         window.destroyed.connect(lambda: self._on_reader_closed(window))
         self._readers.append(window)
         window.show()
@@ -297,7 +343,7 @@ class KlickApp(QObject):
         window.activateWindow()
         return window
 
-    def _on_reader_closed(self, reader: ReaderWindow) -> None:
+    def _on_reader_closed(self, reader: QWidget) -> None:
         if reader in self._readers:
             self._readers.remove(reader)
         self._maybe_quit()
@@ -331,7 +377,7 @@ class KlickApp(QObject):
             toast = Toast("Texto copiado", preview, image, [("read", "Abrir na leitura", "read")])
             toast.actionTriggered.connect(lambda key: self._open_reader(image))
             self._show_toast(toast)
-            self._history.add(image, Action.OCR.value, text=text)
+            self._record_text(image, Action.OCR.value, text)
         self._maybe_quit()
 
     # --- gravação ----------------------------------------------------------
@@ -342,11 +388,13 @@ class KlickApp(QObject):
         indicator = RecordingIndicator(selection.logical, self._recorder.elapsed, label)
         indicator.stopRequested.connect(self._recorder.stop)
         self._indicator = indicator
+        kind = "gifs" if fmt is RecordFormat.GIF else "recordings"
+        temp = config.save_policy(kind) == "gallery"
         # O print da área no instante da seleção vira a miniatura na galeria.
-        self._recording = (selection.image, fmt)
+        self._recording = (selection.image, fmt, temp)
 
         def begin() -> None:
-            folder = config.folder("gifs" if fmt is RecordFormat.GIF else "recordings")
+            folder = self._history.media_dir if temp else config.folder(kind)
             self._recorder.start(selection.rect, fmt, folder, selection.quality, selection.sound)
             if self._recorder.recording:
                 indicator.show()
@@ -358,18 +406,20 @@ class KlickApp(QObject):
         if self._indicator is not None:
             self._indicator.close()
             self._indicator = None
-        self._record_action.setText("Gravar área")
+        self._record_action.setText("Gravar vídeo ou GIF")
 
     def _on_record_finished(self, path: str) -> None:
         self._close_indicator()
         copy_file(Path(path))
-        kind = "video"
+        kind, temp = "video", False
         if self._recording is not None:
-            frame, fmt = self._recording
+            frame, fmt, temp = self._recording
             kind = "gif" if fmt is RecordFormat.GIF else "video"
-            self._history.add_media(Path(path), kind, frame, self._recorder.last_duration)
+            self._history.add_media(Path(path), kind, frame, self._recorder.last_duration, temp=temp)
             self._recording = None
         subtitle = f"{Path(path).name} · é só colar"
+        if temp:
+            subtitle += f"\nFica na galeria por {config.temp_days()} dias" if config.temp_days() else ""
         if self._recorder.warning:
             subtitle += f"\n{self._recorder.warning}: o vídeo ficou sem esse som"
         toast = Toast("GIF copiado" if kind == "gif" else "Gravação copiada", subtitle, None,
@@ -394,19 +444,28 @@ class KlickApp(QObject):
         self._toast = toast
         toast.show_on(QGuiApplication.screenAt(QCursor.pos()))
 
-    def _capture_toast(self, title: str, subtitle: str, image: QImage) -> Toast:
-        toast = Toast(title, subtitle, image, [("mark", "Marcar", "mark"), ("read", "Ler o texto", "read"),
-                                               ("lens", "Pesquisar no Google Lens", "lens"), ("save", "Salvar", "save")])
-        toast.actionTriggered.connect(lambda key: self._on_toast_action(key, image))
+    def _capture_toast(self, title: str, subtitle: str, image: QImage, entry_id: int | None = None) -> Toast:
+        actions = [("mark", "Editar imagem", "mark"), ("read", "Ler o texto", "read"),
+                   ("lens", "Pesquisar no Google Lens", "lens")]
+        if config.save_policy("prints") == "gallery" and entry_id is not None:
+            actions.append(("keep", "Guardar na pasta", "keep"))
+        else:
+            actions.append(("save", "Salvar como…", "save"))
+        toast = Toast(title, subtitle, image, actions)
+        toast.actionTriggered.connect(lambda key: self._on_toast_action(key, image, entry_id))
         return toast
 
-    def _on_toast_action(self, key: str, image: QImage) -> None:
+    def _on_toast_action(self, key: str, image: QImage, entry_id: int | None = None) -> None:
         if key == "mark":
             self._open_editor_image(image)
         elif key == "read":
             self._open_reader(image)
         elif key == "lens":
             lens.search_image(image)
+        elif key == "keep" and entry_id is not None:
+            path = self._history.keep(entry_id)
+            if path:
+                self._show_toast(Toast("Guardado na pasta", path.name, image, kind="ok"))
         elif key == "save":
             self._deliver(Action.SAVE, image)
 
@@ -460,9 +519,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationName("Klick")
     app.setWindowIcon(app_icon())
     app.setQuitOnLastWindowClosed(False)
-    theme.load_fonts()
-    app.setFont(theme.font(13))
-    app.setStyleSheet(theme.app_stylesheet())
+    theme.apply(app)
     app.setProperty("klick_oneshot", args.oneshot)
 
     server = None
@@ -496,9 +553,9 @@ def selftest() -> int:
 
     app = QApplication(sys.argv[:1])
     theme.load_fonts()
-    if "Barlow" not in theme.font(13).family():
+    if "Manrope" not in theme.font(13).family():
         return 2
-    if icons.pixmap("copy", theme.S500, 18, 1.0).isNull():
+    if icons.pixmap("copy", theme.S500, 18, 1.0).isNull() or app_icon().isNull():
         return 3
     image = QImage(560, 90, QImage.Format.Format_RGB32)
     image.fill(QColor("#ffffff"))

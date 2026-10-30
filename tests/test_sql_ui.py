@@ -3,7 +3,7 @@ from PySide6.QtGui import QColor, QGuiApplication, QImage
 
 from klick import sql
 from klick.ocr import OcrResult, Word
-from klick.sql_ui import SqlWindow
+from klick.sql_ui import AnalysisWindow
 
 
 def image() -> QImage:
@@ -33,7 +33,7 @@ def query_result() -> OcrResult:
 
 
 def test_query_tab_formats_and_lists_tables(qapp):
-    window = SqlWindow(image(), query_result(), refine=False)
+    window = AnalysisWindow(image(), query_result(), refine=False)
     assert window.tabs.value == "query"
     text = window.query.toPlainText()
     assert text.startswith("SELECT") and "FROM clientes" in text
@@ -45,7 +45,7 @@ def test_query_tab_formats_and_lists_tables(qapp):
 
 
 def test_grid_opens_in_table_tab_with_insert_preview(qapp):
-    window = SqlWindow(image(), grid_result(), refine=False)
+    window = AnalysisWindow(image(), grid_result(), refine=False)
     assert window.tabs.value == "table"  # é grade, não consulta
     window.table_name.setText("produtos")
     assert window.output.toPlainText().splitlines()[0] == \
@@ -54,7 +54,7 @@ def test_grid_opens_in_table_tab_with_insert_preview(qapp):
 
 
 def test_update_uses_chosen_key_and_edited_cells(qapp):
-    window = SqlWindow(image(), grid_result(), refine=False)
+    window = AnalysisWindow(image(), grid_result(), refine=False)
     window.table_name.setText("produtos")
     window.format.set_value("update")
     window.key.setCurrentIndex(1)  # WHERE descricao
@@ -65,7 +65,7 @@ def test_update_uses_chosen_key_and_edited_cells(qapp):
 
 
 def test_without_header_and_removing_rows(qapp):
-    window = SqlWindow(image(), grid_result(), refine=False)
+    window = AnalysisWindow(image(), grid_result(), refine=False)
     window.header.setChecked(False)
     window.grid.selectRow(0)
     window._remove_rows()
@@ -77,7 +77,7 @@ def test_without_header_and_removing_rows(qapp):
 
 
 def test_best_reading_wins_unless_edited(qapp):
-    window = SqlWindow(image(), grid_result(), refine=False)
+    window = AnalysisWindow(image(), grid_result(), refine=False)
     garbage = OcrResult((Word(".o--.", QRectF(0, 0, 10, 10), 0), Word("o", QRectF(20, 0, 5, 10), 0)), "RapidOCR")
     window._on_done(garbage, "")  # leitura pior: fica a que já estava
     assert window.tabs.value == "table" and window.rows()[1][1] == "Arroz"

@@ -24,7 +24,7 @@ QT_EXCLUDES = [
 a = Analysis(
     [str(ROOT / "klick" / "__main__.py")],
     pathex=[str(ROOT)],
-    # fontes Barlow e JetBrains Mono; modelos e configurações do RapidOCR (baixados pelo build.ps1)
+    # fontes Manrope e JetBrains Mono; modelos e configurações do RapidOCR (baixados pelo build.ps1)
     datas=[(str(ROOT / "klick" / "assets"), "klick/assets"), *collect_data_files("rapidocr"),
            *collect_data_files("soundcard")],
     # pynput escolhe o backend em tempo de execução. Os módulos do winrt usados pelo OCR são achados
@@ -36,6 +36,23 @@ a = Analysis(
     excludes=["tkinter", "unittest", "pydoc", "torch", "paddle", "openvino", "matplotlib", *QT_EXCLUDES],
     noarchive=False,
 )
+
+# O que vem junto sem o Klick usar: OpenGL por software (o Klick não usa OpenGL), o ffmpeg do
+# OpenCV (a gravação usa o ffmpeg do sistema; o OCR só lê imagens), os classificadores do
+# OpenCV, o Qt Quick/QML/PDF puxado por plugins e as traduções do Qt que não são pt-BR.
+DROP = ("opengl32sw.dll", "opencv_videoio_ffmpeg", "cv2/data/", "Qt6Pdf.dll", "Qt6Qml", "Qt6Quick.dll",
+        "Qt6VirtualKeyboard.dll", "imageformats/qpdf.dll", "platforminputcontexts/")
+
+
+def needed(dest: str) -> bool:
+    dest = dest.replace("\\", "/")
+    if any(part in dest for part in DROP):
+        return False
+    return "/translations/" not in dest or "_pt" in dest
+
+
+a.binaries = [entry for entry in a.binaries if needed(entry[0])]
+a.datas = [entry for entry in a.datas if needed(entry[0])]
 pyz = PYZ(a.pure)
 
 exe = EXE(

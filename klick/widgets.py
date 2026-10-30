@@ -1,11 +1,11 @@
-"""Componentes do Visor: botões, obturador, aviso pós-captura e confirmação."""
+"""Componentes da Névoa: botões, escolhas, interruptor, aviso pós-captura e confirmação."""
 
 from __future__ import annotations
 
 from PySide6.QtCore import QEasingCurve, QPointF, QRectF, QSize, Qt, QVariantAnimation, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPainterPath, QPen, QPixmap, QScreen
 from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QDialog, QFrame, QHBoxLayout, QLabel, QPushButton,
-                               QToolButton, QVBoxLayout, QWidget)
+                               QSizePolicy, QToolButton, QVBoxLayout, QWidget)
 
 from klick import icons, theme
 
@@ -14,13 +14,13 @@ TOAST_MARGIN = 16
 
 
 def button(text: str, variant: str = "secondary", icon_name: str | None = None) -> QPushButton:
-    """Botão de painel, em caixa alta: primary (laranja, um por tela), secondary, ghost ou danger."""
+    """Botão em pílula: primary (verde, um por tela), secondary, ghost ou danger."""
     b = QPushButton(text)
     b.setProperty("variant", variant)
     b.setCursor(Qt.CursorShape.PointingHandCursor)
-    b.setFont(theme.font(12.5, 600, caps=True))
+    b.setFont(theme.font(13, 700))
     if icon_name:
-        color = {"primary": theme.G950, "danger": theme.DANGER_FG}.get(variant, theme.A300)
+        color = {"primary": theme.INK, "danger": theme.DANGER_FG}.get(variant, theme.A300)
         b.setIcon(icons.icon(icon_name, color, size=16))
         b.setIconSize(QSize(16, 16))
     return b
@@ -29,7 +29,7 @@ def button(text: str, variant: str = "secondary", icon_name: str | None = None) 
 def icon_button(name: str, label: str, shortcut: str | None = None, size: int = 34) -> QToolButton:
     """Botão só de ícone; o nome e o atalho aparecem no tooltip e no leitor de tela."""
     b = QToolButton()
-    b.setIcon(icons.icon(name, theme.A300, hover=theme.S400, checked=theme.G950))
+    b.setIcon(icons.icon(name, theme.A300, hover=theme.S600, checked=theme.S600))
     b.setIconSize(QSize(18, 18))
     b.setFixedSize(size, size)
     b.setToolTip(theme.tip(label, shortcut))
@@ -69,6 +69,7 @@ class Segmented(QFrame):
             b.setCheckable(True)
             b.setChecked(key == current)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             b.clicked.connect(lambda _=False, k=key: self.changed.emit(k))
             self._group.addButton(b)
             self.buttons[key] = b
@@ -118,58 +119,20 @@ class Switch(QAbstractButton):
             round(off.green() + (on.green() - off.green()) * self._pos),
             round(off.blue() + (on.blue() - off.blue()) * self._pos),
         )
-        p.setPen(QPen(QColor(theme.S400), 1.5) if self.hasFocus() else Qt.PenStyle.NoPen)
+        p.setPen(QPen(QColor(theme.S600), 1.5) if self.hasFocus() else Qt.PenStyle.NoPen)
         p.setBrush(track)
         p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
         d = r.height() - 6
         x = r.left() + 3 + (r.width() - d - 6) * self._pos
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(theme.A50))
+        p.setBrush(QColor("#ffffff"))
         p.drawEllipse(QRectF(x, r.top() + 3, d, d))
 
 
-class ShutterButton(QAbstractButton):
-    """O obturador: botão redondo laranja com anel de alumínio. A assinatura do Visor."""
-
-    def __init__(self, diameter: int = 36, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setFixedSize(diameter + 6, diameter + 6)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._hover = False
-
-    def enterEvent(self, event) -> None:
-        self._hover = True
-        self.update()
-
-    def leaveEvent(self, event) -> None:
-        self._hover = False
-        self.update()
-
-    def paintEvent(self, event) -> None:
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        c = QPointF(self.width() / 2, self.height() / 2)
-        r = min(self.width(), self.height()) / 2 - 3
-        p.setPen(QPen(QColor(theme.G900), 2))
-        p.setBrush(QColor(theme.G800))
-        p.drawEllipse(c, r + 1, r + 1)
-        p.setPen(QPen(QColor(theme.A300), 2))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawEllipse(c, r - 1, r - 1)
-        inner = r * (0.56 if self.isDown() else 0.66)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(theme.S400 if self._hover else theme.S500))
-        p.drawEllipse(c, inner, inner)
-        if self.hasFocus():
-            p.setPen(QPen(QColor(theme.S500), 1.5))
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawEllipse(c, r + 2, r + 2)
-
-
 class Panel(QWidget):
-    """Janela sem moldura com o painel grafite desenhado à mão (cantos e sombra de verdade)."""
+    """Janela sem moldura com o painel de vidro desenhado à mão (cantos arredondados de verdade)."""
 
-    RADIUS = 4
+    RADIUS = theme.WINDOW_RADIUS
 
     def __init__(self, parent: QWidget | None = None, flags=None):
         flags = flags or (Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
@@ -188,8 +151,8 @@ class Panel(QWidget):
         p.fillPath(path, QColor(theme.G900))
         p.setPen(QPen(QColor(theme.G700), 1))
         p.drawPath(path)
-        # brilho fino no topo, como a borda de um corpo de alumínio
-        p.setPen(QPen(QColor(255, 255, 255, 14), 1))
+        # brilho fino no topo, a borda do vidro
+        p.setPen(QPen(QColor(255, 255, 255, 230), 1))
         r = self.panel_rect()
         p.drawLine(QPointF(r.left() + self.RADIUS, r.top() + 1), QPointF(r.right() - self.RADIUS, r.top() + 1))
 
@@ -197,7 +160,7 @@ class Panel(QWidget):
 class Toast(Panel):
     """Aviso do Klick no canto da tela: miniatura, resultado e as próximas ações à mão.
 
-    Some sozinho em 4 s (a barra laranja mostra o tempo); com o mouse em cima, espera.
+    Some sozinho em 4 s (a barra verde mostra o tempo); com o mouse em cima, espera.
     """
 
     actionTriggered = Signal(str)
@@ -216,7 +179,7 @@ class Toast(Panel):
             thumb = QLabel()
             thumb.setPixmap(thumbnail(image, 96, 60))
             thumb.setFixedSize(96, 60)
-            thumb.setStyleSheet(f"border: 1px solid {theme.G600}; border-radius: 2px;")
+            thumb.setStyleSheet(f"border: 1px solid {theme.G700}; border-radius: 8px;")
             row.addWidget(thumb, 0, Qt.AlignmentFlag.AlignTop)
 
         text = QVBoxLayout()
@@ -228,16 +191,16 @@ class Toast(Panel):
         mark.setPixmap(icons.pixmap({"ok": "check", "warn": "warn", "info": "dot"}[kind], color, 15))
         head.addWidget(mark)
         self.title = QLabel(title)
-        self.title.setFont(theme.font(13.5, 650))
+        self.title.setFont(theme.font(13.5, 700))
         self.title.setWordWrap(True)
         head.addWidget(self.title, 1)
         text.addLayout(head)
         if subtitle:
             sub = QLabel(subtitle)
-            sub.setFont(theme.font(11, 400, mono=True))
-            sub.setStyleSheet(f"color: {theme.DATA};")
+            sub.setFont(theme.font(12, 500))
+            sub.setStyleSheet(f"color: {theme.G400};")
             sub.setWordWrap(True)
-            sub.setMaximumWidth(260)
+            sub.setMaximumWidth(290)
             text.addWidget(sub)
         acts = QHBoxLayout()
         acts.setContentsMargins(-6, 4, 0, 0)
@@ -256,7 +219,7 @@ class Toast(Panel):
         self._anim = QVariantAnimation(self, startValue=1.0, endValue=0.0, duration=timeout)
         self._anim.valueChanged.connect(self._tick)
         self._anim.finished.connect(self.close)
-        self.setMinimumWidth(300)
+        self.setMinimumWidth(340)
         self.adjustSize()
 
     def show_on(self, screen: QScreen | None) -> None:
@@ -284,9 +247,9 @@ class Toast(Panel):
         super().paintEvent(event)
         p = QPainter(self)
         r = self.panel_rect()
-        track = QRectF(r.left() + 1, r.bottom() - 3, r.width() - 2, 2)
+        track = QRectF(r.left() + self.RADIUS, r.bottom() - 4, r.width() - 2 * self.RADIUS, 2)
         p.fillRect(track, QColor(theme.G700))
-        p.fillRect(QRectF(track.left(), track.top(), track.width() * self._progress, 2), QColor(theme.CYAN))
+        p.fillRect(QRectF(track.left(), track.top(), track.width() * self._progress, 2), QColor(theme.S500))
 
 
 class ConfirmDialog(QDialog):
@@ -307,12 +270,12 @@ class ConfirmDialog(QDialog):
             thumb = QLabel()
             thumb.setPixmap(thumbnail(image, 92, 58))
             thumb.setFixedSize(92, 58)
-            thumb.setStyleSheet(f"border: 1px solid {theme.G600}; border-radius: 3px;")
+            thumb.setStyleSheet(f"border: 1px solid {theme.G700}; border-radius: 8px;")
             body.addWidget(thumb, 0, Qt.AlignmentFlag.AlignTop)
         words = QVBoxLayout()
         words.setSpacing(6)
         heading = QLabel(title, objectName="title")
-        heading.setFont(theme.font(17, 750, 112))
+        heading.setFont(theme.font(17, 800))
         message = QLabel(text)
         message.setWordWrap(True)
         words.addWidget(heading)
@@ -344,7 +307,7 @@ class ConfirmDialog(QDialog):
     def paintEvent(self, event) -> None:
         p = QPainter(self)
         p.fillRect(self.rect(), QColor(theme.G900))
-        p.setPen(QPen(QColor(theme.G700), 1))
+        p.setPen(QPen(QColor(theme.G600), 1))
         p.drawRect(self.rect().adjusted(0, 0, -1, -1))
 
 

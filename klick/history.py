@@ -3,17 +3,22 @@
 A busca usa FTS5 com remove_diacritics, então "erro" acha "Erro" e "atencao"
 acha "Atenção". O OCR das capturas roda em segundo plano depois de salvar.
 
-As capturas se dividem em quatro coleções: prints (copiados, salvos ou marcados),
-gravações (MP4), GIFs e leitura (o que passou pelo OCR).
+As capturas se dividem em cinco coleções: prints (copiados, salvos ou editados),
+gravações (MP4), GIFs, leituras (o que passou pelo OCR) e análises (SQL, JSON, tabelas).
+
+Cada item é temporário (só na galeria, some depois de alguns dias) ou guardado (o
+arquivo está na pasta do tipo). Guardar copia o print ou o texto para a pasta, ou move
+a gravação que estava na pasta interna da galeria.
 """
 
 from __future__ import annotations
 
 import logging
+import shutil
 import sqlite3
 from concurrent.futures import Future
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
 
@@ -54,6 +59,8 @@ MIGRATIONS = {
     "kind": "ALTER TABLE captures ADD COLUMN kind TEXT NOT NULL DEFAULT 'image'",
     "media": "ALTER TABLE captures ADD COLUMN media TEXT",
     "duration": "ALTER TABLE captures ADD COLUMN duration REAL",
+    "temp": "ALTER TABLE captures ADD COLUMN temp INTEGER NOT NULL DEFAULT 0",
+    "saved": "ALTER TABLE captures ADD COLUMN saved TEXT",
 }
 
 
@@ -62,15 +69,20 @@ class Collection(str, Enum):
     RECORDINGS = "recordings"
     GIFS = "gifs"
     READING = "reading"
+    ANALYSIS = "analysis"
 
 
 # Como cada coleção aparece no SQL.
 FILTERS = {
-    Collection.PRINTS: "c.kind = 'image' AND c.source <> 'ocr'",
+    Collection.PRINTS: "c.kind = 'image' AND c.source NOT IN ('ocr', 'sql')",
     Collection.RECORDINGS: "c.kind = 'video'",
     Collection.GIFS: "c.kind = 'gif'",
     Collection.READING: "c.kind = 'image' AND c.source = 'ocr'",
+    Collection.ANALYSIS: "c.kind = 'image' AND c.source = 'sql'",
 }
+# Pasta de cada coleção (config.FOLDERS); análises vão junto com as leituras.
+FOLDER_KIND = {Collection.PRINTS: "prints", Collection.RECORDINGS: "recordings", Collection.GIFS: "gifs",
+               Collection.READING: "reading", Collection.ANALYSIS: "reading"}
 
 
 @dataclass
@@ -86,6 +98,8 @@ class Entry:
     kind: str = "image"
     media: Path | None = None  # arquivo da gravação ou do GIF
     duration: float | None = None
+    temp: bool = False  # só na galeria: some depois de config.temp_days()
+    saved: Path | None = None  # cópia guardada na pasta (prints e leituras)
 
     @property
     def collection(self) -> Collection:
@@ -93,7 +107,14 @@ class Entry:
             return Collection.RECORDINGS
         if self.kind == "gif":
             return Collection.GIFS
-        return Collection.READING if self.source == "ocr" else Collection.PRINTS
+        return {"ocr": Collection.READING, "sql": Collection.ANALYSIS}.get(self.source, Collection.PRINTS)
+
+    def expires_in(self, days: int, now: datetime | None = None) -> int | None:
+        """Dias até sumir (0 = hoje), ou None se está guardado ou nada expira."""
+        if not self.temp or days <= 0:
+            return None
+        left = self.created_at + timedelta(days=days) - (now or datetime.now())
+        return max(0, left.days + (1 if left.seconds else 0))
 
 
 def fts_query(text: str) -> str:
@@ -111,6 +132,7 @@ class History(QObject):
         self.root = root or config.history_dir()
         self.images = self.root / "images"
         self.images.mkdir(parents=True, exist_ok=True)
+        self.media_dir = self.root / "media"  # gravações e GIFs que ficam só na galeria
         self._run_ocr = run_ocr
         self._db = sqlite3.connect(self.root / "history.db")
         self._db.row_factory = sqlite3.Row
@@ -129,11 +151,12 @@ class History(QObject):
     def enabled(self) -> bool:
         return config.history_enabled()
 
-    def add(self, image: QImage, source: str, text: str | None = None) -> int | None:
+    def add(self, image: QImage, source: str, text: str | None = None, temp: bool = False,
+            saved: Path | None = None) -> int | None:
         """Guarda a captura. Sem `text`, roda o OCR em segundo plano para indexar."""
         if not self.enabled or image.isNull():
             return None
-        entry_id = self._insert(source, image, text or "", "image")
+        entry_id = self._insert(source, image, text or "", "image", temp=temp, saved=saved)
         image.save(str(self._image_path(entry_id)), "PNG")
         if text is None and self._run_ocr:
             ocr.recognize(image, config.ocr_language()).add_done_callback(
@@ -142,12 +165,14 @@ class History(QObject):
         self.changed.emit()
         return entry_id
 
-    def add_media(self, path: Path, kind: str, frame: QImage, duration: float | None = None) -> int | None:
-        """Guarda uma gravação ("video") ou GIF ("gif"). `frame` vira a miniatura; o arquivo fica onde está."""
+    def add_media(self, path: Path, kind: str, frame: QImage, duration: float | None = None,
+                  temp: bool = False) -> int | None:
+        """Guarda uma gravação ("video") ou GIF ("gif"). `frame` vira a miniatura; o arquivo fica onde está
+        (na pasta do tipo, ou em media/ quando é temporário)."""
         if not self.enabled:
             return None
         entry_id = self._insert("record" if kind == "video" else "gif", frame, path.stem, kind,
-                                media=str(path), duration=duration)
+                                media=str(path), duration=duration, temp=temp)
         self.prune(config.history_max_items())
         self.changed.emit()
         return entry_id
@@ -157,9 +182,12 @@ class History(QObject):
             self._db.execute("UPDATE captures SET text = ? WHERE id = ?", (text, entry_id))
         self.changed.emit()
 
-    def search(self, query: str = "", limit: int = 200, collection: Collection | None = None) -> list[Entry]:
+    def search(self, query: str = "", limit: int = 200, collection: Collection | None = None,
+               temp_only: bool = False) -> list[Entry]:
         match = fts_query(query)
         where = [FILTERS[collection]] if collection else []
+        if temp_only:
+            where.append("c.temp = 1")
         args: list = []
         if match:
             sql = "SELECT c.* FROM captures c JOIN captures_fts f ON f.rowid = c.id WHERE captures_fts MATCH ?"
@@ -198,6 +226,47 @@ class History(QObject):
         self._thumb_path(entry_id).unlink(missing_ok=True)
         self.changed.emit()
 
+    def keep(self, entry_id: int) -> Path | None:
+        """Guarda na pasta o que estava só na galeria. Devolve onde ficou o arquivo."""
+        entry = self.get(entry_id)
+        if entry is None:
+            return None
+        if not entry.temp:
+            return entry.media or entry.saved
+        folder = config.folder(FOLDER_KIND[entry.collection])
+        folder.mkdir(parents=True, exist_ok=True)
+        name = config.default_filename(entry.created_at)
+        media, saved = entry.media, entry.saved
+        if entry.media:
+            target = folder / entry.media.name
+            shutil.move(str(entry.media), target)
+            media = target
+        elif entry.collection in (Collection.READING, Collection.ANALYSIS) and entry.text.strip():
+            saved = folder / Path(name).with_suffix(".txt").name
+            saved.write_text(entry.text, encoding="utf-8")
+        else:
+            saved = folder / name
+            shutil.copyfile(entry.image_path, saved)
+        with self._db:
+            self._db.execute("UPDATE captures SET temp = 0, media = ?, saved = ? WHERE id = ?",
+                             (str(media) if media else None, str(saved) if saved else None, entry_id))
+        self.changed.emit()
+        return media or saved
+
+    def expire(self, days: int, now: datetime | None = None) -> int:
+        """Apaga o que está só na galeria há mais de `days` dias (0 = nunca). Devolve quantos."""
+        if days <= 0:
+            return 0
+        limit = ((now or datetime.now()) - timedelta(days=days)).isoformat(timespec="seconds")
+        old = [row[0] for row in self._db.execute(
+            "SELECT id FROM captures WHERE temp = 1 AND created_at < ?", (limit,))]
+        for entry_id in old:
+            self.delete(entry_id, remove_file=True)
+        return len(old)
+
+    def temp_count(self) -> int:
+        return self._db.execute("SELECT COUNT(*) FROM captures WHERE temp = 1").fetchone()[0]
+
     def prune(self, keep: int) -> None:
         old = [row[0] for row in self._db.execute(
             "SELECT id FROM captures ORDER BY id DESC LIMIT -1 OFFSET ?", (keep,))]
@@ -210,13 +279,13 @@ class History(QObject):
     # --- internos ----------------------------------------------------------
 
     def _insert(self, source: str, image: QImage, text: str, kind: str, media: str | None = None,
-                duration: float | None = None) -> int:
+                duration: float | None = None, temp: bool = False, saved: Path | None = None) -> int:
         with self._db:
             cur = self._db.execute(
-                "INSERT INTO captures (created_at, source, width, height, text, kind, media, duration) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO captures (created_at, source, width, height, text, kind, media, duration, temp, saved) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (datetime.now().isoformat(timespec="seconds"), source, image.width(), image.height(), text, kind,
-                 media, duration),
+                 media, duration, int(temp), str(saved) if saved else None),
             )
         entry_id = cur.lastrowid
         if not image.isNull():
@@ -252,4 +321,6 @@ class History(QObject):
             kind=row["kind"],
             media=Path(row["media"]) if row["media"] else None,
             duration=row["duration"],
+            temp=bool(row["temp"]),
+            saved=Path(row["saved"]) if row["saved"] else None,
         )

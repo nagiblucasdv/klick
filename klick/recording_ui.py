@@ -61,7 +61,7 @@ class RecordingFrame(QWidget):
 
 
 class RecordingControls(Panel):
-    """HUD: ponto REC, tempo, tamanho e Parar. Ao gerar o GIF vira uma barra de progresso."""
+    """Controles durante a gravação: ponto REC, tempo, tamanho e Parar. Ao gerar o GIF vira uma barra."""
 
     stopRequested = Signal()
 
@@ -82,7 +82,7 @@ class RecordingControls(Panel):
         self._meta.setStyleSheet(f"color: {theme.G400};")
         self._stop = button("Parar", "secondary")
         self._stop.setIcon(icons.icon("stop", theme.REC, size=16))
-        self._stop.setToolTip(theme.tip("Parar a gravação", "Ctrl ⇧ R"))
+        self._stop.setToolTip(theme.tip("Parar a gravação", config.hotkey_label(config.hotkeys()["record"])))
         self._stop.clicked.connect(self.stopRequested.emit)
         layout.addWidget(self._time)
         layout.addWidget(self._meta)
@@ -180,63 +180,68 @@ class RecordingIndicator:
         self.controls.close()
 
 
-SOUND_OPTIONS = [("none", "Sem som"), ("system", "Do computador"), ("mic", "Microfone"), ("both", "Os dois")]
+SOUND_OPTIONS = [("none", "Sem som"), ("system", "Computador"), ("mic", "Microfone"), ("both", "Ambos")]
 SOUND_HINTS = {
-    "none": "Vídeo mudo",
-    "system": "O que toca nos alto-falantes ou fones",
-    "mic": "Sua voz, pelo microfone padrão do Windows",
-    "both": "Computador e microfone misturados",
+    "none": "Vídeo mudo.",
+    "system": "O que toca nos alto-falantes ou fones.",
+    "mic": "Sua voz, pelo microfone padrão do Windows.",
+    "both": "Computador e microfone juntos.",
 }
+FORMATS = [("video", "Vídeo · MP4"), ("gif", "GIF")]
 
 
 class RecordSetup(QFrame):
-    """Antes de gravar: vai ter som? qual qualidade? Fica ao lado da seleção, no overlay."""
+    """Antes de gravar (F7): vídeo ou GIF, vai ter som, qual qualidade. Fica ao lado da seleção, no overlay."""
 
-    startRequested = Signal(str, str)  # qualidade, som
+    startRequested = Signal(str, str, str)  # formato ("video" ou "gif"), qualidade, som
     backRequested = Signal()
 
-    def __init__(self, parent: QWidget, gif: bool):
+    def __init__(self, parent: QWidget, fmt: str = "video"):
         super().__init__(parent)
         from klick.recorder import QUALITIES
 
         self._qualities = QUALITIES
-        self._gif = gif
         self.setObjectName("panel")
         self.setStyleSheet(theme.dark_panel_stylesheet())
         self.setCursor(Qt.CursorShape.ArrowCursor)
+        self.setFixedWidth(452)
         col = QVBoxLayout(self)
-        col.setContentsMargins(14, 12, 14, 12)
+        col.setContentsMargins(16, 14, 16, 14)
         col.setSpacing(8)
 
         head = QHBoxLayout()
         head.setSpacing(8)
-        dot = QLabel()
-        dot.setPixmap(icons.pixmap("gif" if gif else "rec", theme.S500 if gif else theme.REC, 18))
-        title = QLabel("Gravar GIF" if gif else "Gravar vídeo")
-        title.setFont(theme.font(15, 750, 112))
-        head.addWidget(dot)
+        title = QLabel("Gravar área")
+        title.setFont(theme.font(17, 800))
+        self._size = QLabel()
+        self._size.setFont(theme.font(12, 500, mono=True))
+        self._size.setProperty("role", "muted")
         head.addWidget(title)
+        head.addWidget(self._size)
         head.addStretch(1)
         col.addLayout(head)
 
+        self.format = Segmented(FORMATS, fmt)
+        self.format.changed.connect(self._on_format)
+        col.addWidget(self.format)
+
         self.sound = Segmented(SOUND_OPTIONS, config.record_audio())
+        self._sound_section = self._section("Som")
         self._sound_hint = QLabel()
         self._sound_hint.setProperty("role", "muted")
-        self._sound_hint.setFont(theme.font(11.5, 400))
+        self._sound_hint.setFont(theme.font(12, 500))
         self.sound.changed.connect(lambda key: self._sound_hint.setText(SOUND_HINTS[key]))
         self._sound_hint.setText(SOUND_HINTS[self.sound.value])
-        if not gif:
-            col.addWidget(self._section("VAI TER SOM?"))
-            col.addWidget(self.sound)
-            col.addWidget(self._sound_hint)
+        col.addWidget(self._sound_section)
+        col.addWidget(self.sound)
+        col.addWidget(self._sound_hint)
 
         self.quality = Segmented([(k, q.label) for k, q in QUALITIES.items()], config.record_quality())
         self._quality_hint = QLabel()
         self._quality_hint.setProperty("role", "muted")
-        self._quality_hint.setFont(theme.font(11.5, 400))
+        self._quality_hint.setFont(theme.font(12, 500))
         self.quality.changed.connect(self._show_quality)
-        self._show_quality(self.quality.value)
-        col.addWidget(self._section("QUALIDADE"))
+        col.addWidget(self._section("Qualidade"))
         col.addWidget(self.quality)
         col.addWidget(self._quality_hint)
 
@@ -248,7 +253,7 @@ class RecordSetup(QFrame):
         self.start = button("Iniciar gravação", "danger", "rec")
         self.start.setIcon(icons.icon("rec", "#ffffff", size=16))
         self.start.setStyleSheet(f"QPushButton {{ background: {theme.REC}; color: #ffffff; border-color: {theme.REC}; }}"
-                                 "QPushButton:hover { background: #ff5a50; }")
+                                 "QPushButton:hover { background: #d4513c; }")
         self.start.setToolTip(theme.tip("Começar a gravar", "Enter"))
         self.start.clicked.connect(self.accept)
         foot.addWidget(back)
@@ -256,22 +261,39 @@ class RecordSetup(QFrame):
         foot.addWidget(self.start)
         col.addSpacing(4)
         col.addLayout(foot)
-        self.adjustSize()
+        self._on_format(fmt)
+
+    @property
+    def gif(self) -> bool:
+        return self.format.value == "gif"
+
+    def set_area(self, width: int, height: int) -> None:
+        self._size.setText(f"{width} × {height}")
 
     @staticmethod
     def _section(text: str) -> QLabel:
-        label = QLabel(text)
+        label = QLabel(text.upper())
         label.setProperty("role", "section")
         return label
 
+    def _on_format(self, fmt: str) -> None:
+        gif = fmt == "gif"
+        for widget in (self._sound_section, self.sound, self._sound_hint):
+            widget.setVisible(not gif)  # GIF não tem som
+        self.start.setText("Gravar GIF" if gif else "Iniciar gravação")
+        self._show_quality(self.quality.value)
+        self.adjustSize()
+
     def _show_quality(self, key: str) -> None:
         q = self._qualities[key]
-        self._quality_hint.setText(f"{q.gif_fps} fps · até {q.gif_width} px de largura" if self._gif else q.hint)
+        self._quality_hint.setText(f"{q.gif_fps} fps · até {q.gif_width} px de largura." if self.gif else q.hint)
 
     def accept(self) -> None:
         """Começa a gravar com o que está escolhido e guarda como padrão da próxima vez."""
-        sound = "none" if self._gif else self.sound.value
+        fmt = self.format.value
+        sound = "none" if fmt == "gif" else self.sound.value
         config.set_record_quality(self.quality.value)
-        if not self._gif:
+        config.set_record_format(fmt)
+        if fmt != "gif":
             config.set_record_audio(sound)
-        self.startRequested.emit(self.quality.value, sound)
+        self.startRequested.emit(fmt, self.quality.value, sound)

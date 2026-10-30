@@ -1,14 +1,18 @@
-"""Extra "SQL e tabelas" da leitura (ligado por padrão; desliga nas configurações).
+"""O que a Análise entende num print (extra ligado por padrão; desliga nas configurações).
 
-- Consulta SQL no print: conserta erros típicos do OCR e formata (palavras-chave em
-  maiúsculas, uma cláusula por linha). Na leitura aparece o botão SQL.
-- Grade de resultado no print (SSMS, DBeaver, planilha): vira texto para colar no Excel,
-  CSV ou INSERTs. Na leitura aparece o botão Tabela.
+- Consulta SQL: conserta erros típicos do OCR, formata (palavras-chave em maiúsculas, uma
+  cláusula por linha) e resume tabelas, junções, filtros e ordenação.
+- JSON (log, resposta de API): conserta aspas e vírgulas que o OCR estraga, valida,
+  formata e conta chaves e itens.
+- Grade de resultado (SSMS, DBeaver, planilha): vira texto para o Excel, CSV, INSERT ou
+  UPDATE, com um resumo por coluna (tipo, preenchidos, soma, média, mínimo e máximo).
 """
 
 from __future__ import annotations
 
+import json
 import re
+from dataclasses import dataclass
 
 from PySide6.QtCore import QRegularExpression
 from PySide6.QtGui import QColor, QFont, QSyntaxHighlighter, QTextCharFormat
@@ -79,7 +83,7 @@ def tables(text: str) -> list[str]:
 class SqlHighlighter(QSyntaxHighlighter):
     """Cores do SQL no painel da leitura: palavras-chave, textos, números e comentários."""
 
-    def __init__(self, document, dark: bool):
+    def __init__(self, document):
         super().__init__(document)
 
         def fmt(color: str, bold: bool = False) -> QTextCharFormat:
@@ -89,13 +93,12 @@ class SqlHighlighter(QSyntaxHighlighter):
                 f.setFontWeight(QFont.Weight.DemiBold)
             return f
 
-        keyword = theme.S400 if dark else theme.S600
         self._rules = [
             (QRegularExpression(r"\b(" + "|".join(KEYWORDS) + r")\b",
-                                QRegularExpression.PatternOption.CaseInsensitiveOption), fmt(keyword, True)),
-            (QRegularExpression(r"\b\d+(\.\d+)?\b"), fmt(theme.CYAN if dark else "#0077a3")),
-            (QRegularExpression(r"'[^']*'"), fmt(theme.OK if dark else "#1e7a45")),
-            (QRegularExpression(r"--[^\n]*"), fmt(theme.G400)),
+                                QRegularExpression.PatternOption.CaseInsensitiveOption), fmt(theme.S600, True)),
+            (QRegularExpression(r"\b\d+(\.\d+)?\b"), fmt("#1c6fb8")),
+            (QRegularExpression(r"'[^']*'"), fmt("#9a5b00")),
+            (QRegularExpression(r"--[^\n]*"), fmt(theme.G500)),
         ]
 
     def highlightBlock(self, text: str) -> None:
@@ -250,3 +253,221 @@ def reading_score(text: str) -> int:
         elif token not in _SYMBOLS:
             score -= 4
     return score
+
+
+# --- resumo da consulta -------------------------------------------------------------
+
+_STOP = r"(?:left|right|inner|full|cross|join|where|group\s+by|order\s+by|having|limit|union)"
+
+
+def joins(text: str) -> list[str]:
+    """Cada junção numa linha: "LEFT JOIN pedidos p ON p.codcli = c.codcli"."""
+    flat = " ".join(text.split())
+    found = re.findall(r"\b((?:(?:left|right|inner|full|cross)\s+)?(?:outer\s+)?join\s+.+?)"
+                       rf"(?=\s+{_STOP}\b|;|$)", flat, flags=re.IGNORECASE)
+    return [" ".join(j.split()) for j in found]
+
+
+def filters(text: str) -> list[str]:
+    """As condições do WHERE, uma por item (separadas pelos AND/OR de fora dos parênteses)."""
+    flat = " ".join(text.split())
+    match = re.search(r"\bwhere\b(.+?)(?=\b(?:group\s+by|order\s+by|having|limit|union)\b|;|$)", flat,
+                      flags=re.IGNORECASE)
+    if not match:
+        return []
+    out: list[str] = []
+    depth, current = 0, []
+    for word in match.group(1).split():
+        if depth == 0 and word.upper() in ("AND", "OR") and current:
+            out.append(" ".join(current))
+            current = [word.upper()]
+        else:
+            current.append(word)
+        depth += word.count("(") - word.count(")")
+    if current:
+        out.append(" ".join(current))
+    return out
+
+
+def ordering(text: str) -> str:
+    flat = " ".join(text.split())
+    match = re.search(r"\border\s+by\s+(.+?)(?=\b(?:limit|offset)\b|;|$)", flat, flags=re.IGNORECASE)
+    return match.group(1).strip() if match else ""
+
+
+def grouping(text: str) -> str:
+    flat = " ".join(text.split())
+    match = re.search(r"\bgroup\s+by\s+(.+?)(?=\b(?:having|order\s+by|limit)\b|;|$)", flat, flags=re.IGNORECASE)
+    return match.group(1).strip() if match else ""
+
+
+# --- JSON -------------------------------------------------------------------------
+
+def looks_like_json(text: str) -> bool:
+    """Começa com { ou [ e tem pares "chave": valor."""
+    flat = text.strip()
+    return bool(flat) and flat[0] in "{[" and bool(re.search(r"[\"'“”]?\w[\w\s.-]*[\"'“”]?\s*:", flat))
+
+
+def fix_json(text: str) -> str:
+    """Conserta o que o OCR e os logs estragam: aspas curvas, aspas simples, vírgula sobrando
+    antes de } ou ], True/False/None do Python e chaves sem aspas."""
+    text = re.sub(r"[“”„]", '"', text)
+    text = re.sub(r"[‘’´`]", "'", text)
+    if "'" in text and '"' not in text:
+        text = text.replace("'", '"')
+    text = re.sub(r",\s*([}\]])", r"\1", text)
+    text = re.sub(r"\bTrue\b", "true", text)
+    text = re.sub(r"\bFalse\b", "false", text)
+    text = re.sub(r"\bNone\b", "null", text)
+    text = re.sub(r"([{,]\s*)([A-Za-z_][\w-]*)(\s*:)", r'\1"\2"\3', text)  # chave sem aspas
+    return text
+
+
+@dataclass
+class JsonReading:
+    value: object = None
+    text: str = ""  # formatado (ou o texto consertado, se não deu para ler)
+    error: str = ""  # "linha 3, coluna 14: falta uma vírgula" quando inválido
+    keys: int = 0
+    items: int = 0  # elementos em listas
+    depth: int = 0
+
+
+_JSON_ERRORS = {
+    "Expecting ',' delimiter": "falta uma vírgula",
+    "Expecting ':' delimiter": "falta dois-pontos",
+    "Expecting property name enclosed in double quotes": "chave sem aspas",
+    "Expecting value": "falta um valor",
+    "Unterminated string starting at": "texto sem aspas no fim",
+    "Extra data": "sobrou texto depois do fim",
+}
+
+
+def read_json(text: str) -> JsonReading:
+    fixed = fix_json(text.strip())
+    try:
+        value = json.loads(fixed)
+    except json.JSONDecodeError as exc:
+        reason = _JSON_ERRORS.get(exc.msg, exc.msg)
+        return JsonReading(text=fixed, error=f"linha {exc.lineno}, coluna {exc.colno}: {reason}")
+    out = JsonReading(value, json.dumps(value, indent=2, ensure_ascii=False))
+
+    def walk(node, level: int) -> None:
+        out.depth = max(out.depth, level)
+        if isinstance(node, dict):
+            out.keys += len(node)
+            for child in node.values():
+                walk(child, level + 1)
+        elif isinstance(node, list):
+            out.items += len(node)
+            for child in node:
+                walk(child, level + 1)
+
+    walk(value, 0)
+    return out
+
+
+class JsonHighlighter(QSyntaxHighlighter):
+    """Cores do JSON: chaves, textos, números e true/false/null."""
+
+    def __init__(self, document):
+        super().__init__(document)
+
+        def fmt(color: str, bold: bool = False) -> QTextCharFormat:
+            f = QTextCharFormat()
+            f.setForeground(QColor(color))
+            if bold:
+                f.setFontWeight(QFont.Weight.DemiBold)
+            return f
+
+        self._rules = [
+            (QRegularExpression(r'"(?:[^"\\]|\\.)*"'), fmt("#9a5b00")),
+            (QRegularExpression(r"-?\b\d+(\.\d+)?([eE][+-]?\d+)?\b"), fmt("#1c6fb8")),
+            (QRegularExpression(r"\b(true|false|null)\b"), fmt(theme.REC, True)),
+            (QRegularExpression(r'"(?:[^"\\]|\\.)*"(?=\s*:)'), fmt(theme.S600, True)),
+        ]
+
+    def highlightBlock(self, text: str) -> None:
+        for pattern, form in self._rules:
+            it = pattern.globalMatch(text)
+            while it.hasNext():
+                m = it.next()
+                self.setFormat(m.capturedStart(), m.capturedLength(), form)
+
+
+# --- resumo da tabela ----------------------------------------------------------------
+
+def number(value: str, comma_decimal: bool = True) -> float | None:
+    """Número de uma célula: 1240.50, 1.240,50 (com vírgula decimal), R$ 7, 12%. None se não for."""
+    v = re.sub(r"^(R\$|US\$|\$)\s*", "", value.strip()).rstrip("%").strip()
+    if not v:
+        return None
+    if comma_decimal and re.fullmatch(r"-?(\d{1,3}(\.\d{3})+|\d+)(,\d+)?", v):
+        v = v.replace(".", "").replace(",", ".")
+    try:
+        return float(v)
+    except ValueError:
+        return None
+
+
+_DATE = re.compile(r"\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2}")
+
+
+@dataclass
+class ColumnStats:
+    name: str
+    kind: str  # "número", "data", "texto" ou "vazia"
+    filled: int
+    total: int
+    distinct: int
+    sum: float | None = None
+    mean: float | None = None
+    min: float | None = None
+    max: float | None = None
+
+
+def column_stats(rows: list[list[str]], header: bool = True, comma_decimal: bool = True) -> list[ColumnStats]:
+    """Resumo de cada coluna da grade: o que tem nela e, se for número, as contas."""
+    names = columns(rows, header)
+    data = _data(rows, header)
+    out = []
+    for i, name in enumerate(names):
+        values = [r[i].strip() for r in data if i < len(r)]
+        filled = [v for v in values if v]
+        numbers = [n for n in (number(v, comma_decimal) for v in filled) if n is not None]
+        if not filled:
+            kind = "vazia"
+        elif len(numbers) == len(filled):
+            kind = "número"
+        elif all(_DATE.fullmatch(v) for v in filled):
+            kind = "data"
+        else:
+            kind = "texto"
+        stats = ColumnStats(name, kind, len(filled), len(values), len(set(filled)))
+        if kind == "número" and numbers:
+            stats.sum = sum(numbers)
+            stats.mean = stats.sum / len(numbers)
+            stats.min, stats.max = min(numbers), max(numbers)
+        out.append(stats)
+    return out
+
+
+def brl(value: float) -> str:
+    """1240.5 -> "1.240,50"; inteiros ficam sem casas."""
+    if value == int(value) and abs(value) < 1e15:
+        return f"{int(value):,}".replace(",", ".")
+    return f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def analysis_tab(result) -> str | None:
+    """Aba da Análise para o que foi lido: "query", "json", "table" ou None (texto comum)."""
+    if result is None or not result.words:
+        return None
+    if looks_like_json(result.text):
+        return "json"
+    if looks_like_sql(result.text):
+        return "query"
+    if looks_like_table(table_rows(result.words)):
+        return "table"
+    return None

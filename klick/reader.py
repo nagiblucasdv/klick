@@ -183,7 +183,7 @@ class WordView(QWidget):
         p.drawImage(QRectF(self.rect()), self.image)
 
         if self.result is None and not self.message:
-            # Lendo: uma faixa laranja varre o print, como o visor de uma câmera.
+            # Lendo: uma faixa verde varre o print, como o visor de uma câmera.
             y = self.height() * self._scan
             band = QColor(theme.S500)
             band.setAlpha(40)
@@ -216,7 +216,7 @@ class WordView(QWidget):
             box.moveCenter(QPointF(self.width() / 2, self.height() / 2))
             p.setPen(QPen(QColor(theme.G700), 1))
             p.setBrush(QColor(theme.G900))
-            p.drawRoundedRect(box, 4, 4)
+            p.drawRoundedRect(box, box.height() / 2, box.height() / 2)
             p.setPen(QColor(theme.PAPER))
             p.drawText(box, Qt.AlignmentFlag.AlignCenter, self.message)
 
@@ -225,6 +225,7 @@ class ReaderWindow(QWidget):
     """Janela da leitura. Roda o OCR sozinha (rápido e depois o preciso) e avisa quando terminou."""
 
     recognized = Signal(object)  # OcrResult final
+    analysisRequested = Signal(object, str)  # OcrResult, aba da Análise ("query", "json" ou "table")
     _done = Signal(object, str, bool)  # resultado, erro, preciso? (vem das threads do OCR)
 
     def __init__(self, image: QImage, result: OcrResult | None = None):
@@ -236,15 +237,14 @@ class ReaderWindow(QWidget):
         scheme = theme.window_scheme()
         self.setStyleSheet(theme.window_stylesheet(scheme) + f"""
             QPlainTextEdit {{ background: {scheme.field}; color: {scheme.fg}; border: 1px solid {scheme.line};
-                border-radius: 3px; padding: 8px; selection-background-color: {theme.S500};
-                selection-color: {theme.G950}; }}
+                border-radius: {theme.RADIUS}px; padding: 10px; selection-background-color: {theme.SOFT};
+                selection-color: {theme.S600}; }}
             QPlainTextEdit:focus {{ border-color: {theme.S500}; }}""")
         self._precise_done = False
         self._edited = False
         self._syncing = False
         self._offsets: list[tuple[int, int]] = []
         self._image = image
-        self._dark = scheme.dark
 
         screen = QGuiApplication.primaryScreen().availableGeometry()
         ratio = QGuiApplication.primaryScreen().devicePixelRatio()
@@ -259,10 +259,10 @@ class ReaderWindow(QWidget):
         logo = QLabel()
         logo.setPixmap(app_icon().pixmap(26, 26))
         title = QLabel("Leitura")
-        title.setFont(theme.font(18, 800, 125))
+        title.setFont(theme.font(20, 800))
         self.status = QLabel("Lendo…")
         self.status.setProperty("role", "muted")
-        self.status.setFont(theme.font(11.5, 400, mono=True))
+        self.status.setFont(theme.font(12, 500, mono=True))
         head.addWidget(logo)
         head.addWidget(title)
         head.addWidget(self.status)
@@ -272,7 +272,7 @@ class ReaderWindow(QWidget):
         head.addWidget(hint)
 
         frame = QWidget()
-        frame.setStyleSheet(f"background: {theme.G950}; border-radius: 3px;")
+        frame.setStyleSheet(f"background: {theme.G800}; border-radius: {theme.WINDOW_RADIUS}px;")
         inner = QVBoxLayout(frame)
         inner.setContentsMargins(0, 0, 0, 0)
         inner.addWidget(self.view, 0, Qt.AlignmentFlag.AlignCenter)
@@ -280,21 +280,16 @@ class ReaderWindow(QWidget):
         side = QVBoxLayout()
         side.setSpacing(6)
         side_title = QLabel("Texto reconhecido")
-        side_title.setFont(theme.font(13, 650))
-        self.sql_toggle = button("SQL", "ghost", "sql")
-        self.sql_toggle.setToolTip("Abrir a consulta na janela de SQL")
-        self.sql_toggle.clicked.connect(lambda: self._open_sql("query"))
-        self.sql_toggle.hide()
-        self.table = button("Tabela", "ghost", "table")
-        self.table.setToolTip("Abrir a grade na janela de SQL: Excel, CSV, INSERT ou UPDATE")
-        self.table.clicked.connect(lambda: self._open_sql("table"))
-        self.table.hide()
-        self._sql_windows: list = []
+        side_title.setFont(theme.font(14, 700))
+        self.analysis = button("Abrir na Análise", "secondary", "analysis")
+        self.analysis.setToolTip("Consulta SQL, JSON ou tabela: abre na Análise para formatar e converter")
+        self.analysis.clicked.connect(lambda: self.analysisRequested.emit(self.view.result, self._analysis_tab))
+        self.analysis.hide()
+        self._analysis_tab = "query"
         title_row = QHBoxLayout()
         title_row.addWidget(side_title)
         title_row.addStretch(1)
-        title_row.addWidget(self.table)
-        title_row.addWidget(self.sql_toggle)
+        title_row.addWidget(self.analysis)
         side_hint = QLabel("Dá para corrigir aqui antes de copiar")
         side_hint.setProperty("role", "muted")
         side_hint.setFont(theme.font(12))
@@ -400,9 +395,8 @@ class ReaderWindow(QWidget):
         self.copy_all.setEnabled(bool(result.words))
         self.search.setEnabled(bool(result.words))
         self.save_txt.setEnabled(bool(result.words))
-        addon = config.option("addon_sql")
-        self.sql_toggle.setVisible(addon and sql.looks_like_sql(result.text))
-        self.table.setVisible(addon and sql.looks_like_table(sql.table_rows(result.words)))
+        self._analysis_tab = sql.analysis_tab(result)
+        self.analysis.setVisible(config.option("addon_sql") and self._analysis_tab is not None)
         if self._precise_done:
             self.recognized.emit(result)
 
@@ -480,16 +474,6 @@ class ReaderWindow(QWidget):
         text = " ".join(self._selection_text().split())
         self.copy_sel.setEnabled(bool(text))
         self.picked.setText(f"Selecionado: {text}" if text else "Nada selecionado ainda")
-
-    def _open_sql(self, tab: str) -> None:
-        from klick.sql_ui import SqlWindow
-
-        window = SqlWindow(self._image, self.view.result, tab)
-        window.destroyed.connect(lambda: window in self._sql_windows and self._sql_windows.remove(window))
-        self._sql_windows.append(window)
-        window.show()
-        window.raise_()
-        window.activateWindow()
 
     def _save_text(self) -> None:
         text = self.text.toPlainText()

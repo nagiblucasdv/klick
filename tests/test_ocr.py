@@ -142,6 +142,7 @@ def test_precise_positions_are_in_original_pixels(qapp):
     p.drawText(10, 40, "Pedido 48213 faturado")  # rente à borda, como numa seleção apertada
     p.end()
     result = recognize_precise(image).result(timeout=180)
-    assert result.text == "Pedido 48213 faturado"
+    # Sem tela (offscreen) a Segoe UI cai na fonte do app, mais espaçada: o RapidOCR pode quebrar em linhas.
+    assert " ".join(result.text.split()) == "Pedido 48213 faturado"
     first = result.words[0].rect
     assert 0 <= first.left() <= 20 and 5 <= first.top() <= 25  # sem o deslocamento da margem interna

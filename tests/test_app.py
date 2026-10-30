@@ -53,7 +53,7 @@ def test_finished_recording_goes_to_gallery(qapp, tmp_path, monkeypatch):
 
     klick = make_app(tmp_path)
     monkeypatch.setattr(klick, "_show_toast", lambda toast: None)
-    klick._recording = (selection().image, RecordFormat.GIF)
+    klick._recording = (selection().image, RecordFormat.GIF, False)
     klick._recorder.last_duration = 3.2
     video = tmp_path / "klick_teste.gif"
     video.write_bytes(b"GIF89a")

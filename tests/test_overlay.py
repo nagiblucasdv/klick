@@ -103,7 +103,7 @@ def test_selection_rect_is_physical_on_high_dpi(qapp):
 
 
 def test_ctrl_keys_map_to_actions(qapp):
-    for key, expected in ((Qt.Key.Key_T, Action.READ), (Qt.Key.Key_R, Action.RECORD), (Qt.Key.Key_G, Action.GIF)):
+    for key, expected in ((Qt.Key.Key_T, Action.READ), (Qt.Key.Key_L, Action.LENS), (Qt.Key.Key_Q, Action.SQL)):
         shot, _ = make_shot()
         session = CaptureSession([shot])
         actions = []
@@ -112,10 +112,49 @@ def test_ctrl_keys_map_to_actions(qapp):
         overlay = session.overlays[0]
         drag(overlay, QPoint(10, 10), QPoint(50, 50))
         QTest.keyClick(overlay, key, Qt.KeyboardModifier.ControlModifier)
-        if expected in (Action.RECORD, Action.GIF):
-            assert overlay.record_setup is not None and actions == []  # antes pergunta som e qualidade
-            QTest.keyClick(overlay, Qt.Key.Key_Return)
         assert actions == [expected]
+
+
+def test_print_mode_has_no_recording(qapp):
+    shot, _ = make_shot()
+    overlay = SelectionOverlay(shot)
+    overlay.show()
+    drag(overlay, QPoint(10, 10), QPoint(50, 50))
+    assert Action.RECORD not in overlay._toolbar.buttons and Action.GIF not in overlay._toolbar.buttons
+    QTest.keyClick(overlay, Qt.Key.Key_R, Qt.KeyboardModifier.ControlModifier)
+    assert overlay.record_setup is None
+    overlay.close()
+
+
+def test_record_mode_asks_format_then_records(qapp):
+    from klick import config
+    for fmt, expected in (("video", Action.RECORD), ("gif", Action.GIF)):
+        shot, _ = make_shot()
+        session = CaptureSession([shot], Action.RECORD)
+        actions = []
+        session.finished.connect(lambda action, selection: actions.append(action))
+        session.start()
+        overlay = session.overlays[0]
+        drag(overlay, QPoint(10, 10), QPoint(50, 50))
+        assert overlay.record_setup is not None and actions == []  # antes pergunta formato, som e qualidade
+        overlay.record_setup.format.set_value(fmt)
+        QTest.keyClick(overlay, Qt.Key.Key_Return)
+        assert actions == [expected]
+    config.set_record_format("video")
+
+
+def test_click_outside_keeps_the_selection(qapp):
+    shot, _ = make_shot()
+    session = CaptureSession([shot])
+    session.start()
+    overlay = session.overlays[0]
+    drag(overlay, QPoint(10, 10), QPoint(50, 50))
+    before = overlay.selection
+    QTest.mouseClick(overlay, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(300, 300))
+    assert overlay.selection == before and overlay._toolbar.isVisible()  # um clique solto não recomeça o print
+    drag(overlay, QPoint(100, 100), QPoint(160, 140))
+    assert overlay.selection != before  # arrastar de verdade, sim
+    overlay.close()
 
 
 def test_record_setup_passes_sound_and_quality(qapp):
@@ -124,9 +163,11 @@ def test_record_setup_passes_sound_and_quality(qapp):
     got = []
     session.finished.connect(lambda action, selection: got.append(selection))
     session.start()
+    session._overlays = [SelectionOverlay(shot, Action.RECORD)]
+    session._overlays[0].selected.connect(session._on_selected)
     overlay = session.overlays[0]
+    overlay.show()
     drag(overlay, QPoint(10, 10), QPoint(50, 50))
-    overlay._toolbar.buttons[Action.RECORD].click()
     setup = overlay.record_setup
     setup.sound.buttons["both"].click()
     setup.quality.buttons["high"].click()
@@ -139,16 +180,17 @@ def test_record_setup_passes_sound_and_quality(qapp):
     config.set_record_quality("medium")
 
 
-def test_record_setup_esc_goes_back_to_toolbar(qapp):
+def test_record_setup_esc_goes_back_to_selecting(qapp):
     shot, _ = make_shot()
-    overlay = SelectionOverlay(shot)
+    overlay = SelectionOverlay(shot, Action.RECORD)
     overlay.show()
     drag(overlay, QPoint(10, 10), QPoint(50, 50))
-    overlay._finish(Action.GIF)
-    assert overlay.record_setup is not None
-    assert not overlay.record_setup.sound.isVisibleTo(overlay.record_setup)  # GIF não tem som
+    setup = overlay.record_setup
+    assert setup is not None
+    setup.format.set_value("gif")
+    assert not setup.sound.isVisibleTo(setup)  # GIF não tem som
     QTest.keyClick(overlay, Qt.Key.Key_Escape)
-    assert overlay.record_setup is None and overlay._toolbar.isVisible()
+    assert overlay.record_setup is None and not overlay._toolbar.isVisible()
     overlay.close()
 
 
