@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 from concurrent.futures import Future
 from pathlib import Path
@@ -15,7 +14,7 @@ from PySide6.QtGui import QAction, QCursor, QDesktopServices, QGuiApplication, Q
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QMenu, QSystemTrayIcon, QVBoxLayout, QWidget, \
     QWidgetAction
 
-from klick import __author__, __version__, config, icons, lens, ocr, theme
+from klick import __author__, __version__, config, focus, icons, lens, ocr, theme
 from klick.actions import Action, copy_file, copy_image, copy_text, save_image, store_image, store_text
 from klick.analysis.schema import Schema
 from klick.analysis_ui import AnalysisWindow
@@ -25,13 +24,14 @@ from klick.history import History
 from klick.history_ui import HistoryWindow
 from klick.hotkeys import HotkeyListener
 from klick.icon import app_icon
+from klick.library import Library
 from klick.overlay import CaptureSession
 from klick.recorder import Recorder, RecordFormat
 from klick.reader import ReaderWindow
 from klick.recording_ui import SOUND_OPTIONS, RecordingIndicator
 from klick.settings_ui import SettingsDialog
 from klick.single import InstanceServer, send_to_running
-from klick.structure_ui import StructurePicker
+from klick.quick_ui import QuickPanel
 from klick.widgets import Toast
 
 log = logging.getLogger("klick")
@@ -56,7 +56,8 @@ class KlickApp(QObject):
         self._history = history if history is not None else History()
         self._history_window: HistoryWindow | None = None
         self._schema = Schema(config.schema_path())  # tabelas aprendidas na Análise (autocompletar)
-        self._picker: StructurePicker | None = None
+        self._library = Library(config.library_path())  # consultas guardadas (Galeria > Consultas)
+        self._panel: QuickPanel | None = None
 
         self._recorder = Recorder(self)
         self._recorder.converting.connect(lambda text: self._indicator and self._indicator.set_status(text))
@@ -73,7 +74,7 @@ class KlickApp(QObject):
         self._tray.setContextMenu(self._menu)
         self._tray.activated.connect(self._on_tray_activated)
 
-        self._hotkeys = HotkeyListener(config.active_hotkeys())
+        self._hotkeys = HotkeyListener(config.hotkeys())
         self._hotkeys.triggered.connect(self._on_hotkey)
         self._ocrDone.connect(self._on_ocr_done)
 
@@ -83,7 +84,7 @@ class KlickApp(QObject):
         if QSystemTrayIcon.isSystemTrayAvailable():
             self._tray.show()
         if self._hotkeys.start():
-            log.info("Atalhos globais: %s", config.active_hotkeys())
+            log.info("Atalhos globais: %s", config.hotkeys())
         self.expire()
         self._expire_timer.start()
 
@@ -111,7 +112,7 @@ class KlickApp(QObject):
 
     def show_history(self) -> None:
         if self._history_window is None:
-            window = HistoryWindow(self._history)
+            window = HistoryWindow(self._history, self._library)
             window.captureRequested.connect(lambda: self.start_capture())
             window.recordRequested.connect(self.toggle_recording)
             window.readRequested.connect(lambda image: self._open_reader(image, record=False))
@@ -132,7 +133,7 @@ class KlickApp(QObject):
         dialog.savingChanged.connect(self.expire)
         dialog.exec()
         # Fechar a janela no meio da gravação de um atalho deixaria os atalhos pausados.
-        self._hotkeys.restart(config.active_hotkeys())
+        self._hotkeys.restart(config.hotkeys())
         self._build_menu()
 
     def _pause_hotkeys(self, paused: bool) -> None:
@@ -140,10 +141,10 @@ class KlickApp(QObject):
         if paused:
             self._hotkeys.stop()
         else:
-            self._hotkeys.restart(config.active_hotkeys())
+            self._hotkeys.restart(config.hotkeys())
 
     def _reload_hotkeys(self) -> None:
-        self._hotkeys.restart(config.active_hotkeys())
+        self._hotkeys.restart(config.hotkeys())
         self._build_menu()
 
     def _build_menu(self) -> None:
@@ -158,8 +159,7 @@ class KlickApp(QObject):
             self._record_action.setText("Parar gravação")
         self._menu_item(menu, "read", "Ler texto", keys["ocr"], lambda: self.start_capture(Action.OCR))
         self._menu_item(menu, "analysis", "Análise: SQL, JSON ou tabela", None, lambda: self.start_capture(Action.SQL))
-        if config.option("structure"):
-            self._menu_item(menu, "table", "Estrutura de tabelas", keys["structure"], lambda: self.show_structure())
+        self._menu_item(menu, "sql", "Consultas", keys["queries"], lambda: self.show_queries())
         menu.addSeparator()
         self._menu_item(menu, "image", "Galeria", None, lambda: self.show_history())
         self._menu_item(menu, "gear", "Configurações", None, lambda: self.show_settings())
@@ -350,7 +350,7 @@ class KlickApp(QObject):
     def _open_sql(self, image: QImage, record: bool = True, result=None, kind: str | None = None) -> AnalysisWindow:
         """Análise (SQL, JSON e tabelas). Da captura, o que foi lido vai para a coleção Análises; ao fechar, a
         galeria fica com o texto final (com as suas correções)."""
-        window = AnalysisWindow(image, result, kind, schema=self._schema)
+        window = AnalysisWindow(image, result, kind, schema=self._schema, library=self._library)
         if record:
             entry: dict[str, int | None] = {"id": None}
 
@@ -359,8 +359,15 @@ class KlickApp(QObject):
                     entry["id"] = self._record_text(image, "sql", text)
 
             def closed(text: str) -> None:
-                if entry["id"] is not None and text.strip():
-                    self._history.set_text(entry["id"], text)
+                if entry["id"] is None or not text.strip():
+                    return
+                self._history.set_text(entry["id"], text)
+                saved = (item := self._history.get(entry["id"])) is not None and item.saved
+                if saved and saved.suffix == ".txt" and saved.exists():  # "Na pasta": o arquivo fica com as correções
+                    try:
+                        saved.write_text(text, encoding="utf-8")
+                    except OSError:
+                        log.warning("Não foi possível atualizar %s", saved, exc_info=True)
 
             window.recognized.connect(recorded)
             window.finished.connect(closed)
@@ -519,19 +526,34 @@ class KlickApp(QObject):
             self.start_capture(Action.OCR)
         elif name == "record":
             self.toggle_recording()
-        elif name == "structure":
-            self.show_structure()
+        elif name == "queries":
+            self.show_queries()
 
-    def show_structure(self) -> None:
-        """Abre o autocompletar de estrutura perto do mouse (uma janela só)."""
-        if self._picker is not None and shiboken6.isValid(self._picker):
-            self._picker.close()
-        picker = StructurePicker(self._schema)
-        picker.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        picker.copied.connect(lambda table, kind: self._show_toast(
-            Toast(f"{kind} de {table} copiado", "Cole onde quiser (Ctrl+V).", kind="ok")))
-        self._picker = picker
-        picker.show_near()
+    def show_queries(self) -> None:
+        """Painel de consultas junto de onde você está digitando, como o Windows + V. Enter cola lá."""
+        if self._panel is not None and shiboken6.isValid(self._panel):
+            self._panel.close()
+            self._panel = None
+            return  # o atalho de novo fecha, como o Windows + V
+        before = focus.foreground()  # quem estava na frente: é lá que a consulta vai ser colada
+        tables = config.option("structure") or bool(self._schema.tables)
+        panel = QuickPanel(self._library, self._schema, tables=tables)
+        panel.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        panel.chosen.connect(lambda text, paste: self._insert(before, text, paste))
+        panel.libraryRequested.connect(self.show_library)
+        panel.cancelled.connect(lambda: focus.give_back(before))
+        self._panel = panel
+        panel.show_at(focus.caret_or_cursor())
+
+    def _insert(self, window: int, text: str, paste: bool) -> None:
+        copy_text(text)
+        focus.give_back(window)
+        if paste:
+            QTimer.singleShot(90, focus.paste)  # o programa precisa estar na frente antes do Ctrl+V
+
+    def show_library(self) -> None:
+        self.show_history()
+        self._history_window.show_library()
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
@@ -559,10 +581,6 @@ def main(argv: list[str] | None = None) -> int:
         return selftest()
 
     command = next((name for name in ("capture", "ocr", "record", "history") if getattr(args, name)), "")
-    if sys.platform == "win32":
-        # Sem isso o Windows não deixa uma janela aberta por atalho global (o autocompletar, a captura) vir para a
-        # frente com o foco: ela piscaria na barra de tarefas e o que você digitasse iria para o outro programa.
-        os.environ.setdefault("QT_QPA_PLATFORM", "windows:alwaysactivatewindow")
     if args.oneshot:
         command = command or "capture"
 

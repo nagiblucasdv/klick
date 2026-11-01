@@ -15,7 +15,7 @@ from PySide6.QtCore import QEasingCurve, QObject, QPoint, QPointF, QRect, QRectF
 from PySide6.QtGui import (QColor, QCursor, QGuiApplication, QImage, QKeySequence, QPainter, QPainterPath, QPen)
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QToolButton, QWidget
 
-from klick import config, icons, theme
+from klick import config, focus, icons, theme
 from klick.actions import Action
 from klick.capture import ScreenShot, Selection, to_physical
 from klick.editor import EditBar, Marker, Tool, blur, handle_mark_key
@@ -678,11 +678,11 @@ class CaptureSession(QObject):
     def start(self) -> None:
         for overlay in self._overlays:
             overlay.show()
-        # Foca o overlay do monitor onde está o cursor.
+        # Foca o overlay do monitor onde está o cursor (de verdade: o Esc e os atalhos valem antes do 1º clique).
         cursor_screen = QGuiApplication.screenAt(QCursor.pos())
         for overlay in self._overlays:
             if overlay.screen() is cursor_screen:
-                overlay.activateWindow()
+                focus.take(overlay)
 
     @property
     def overlays(self) -> list[SelectionOverlay]:

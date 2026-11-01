@@ -26,8 +26,8 @@ HOTKEY_TEXT = {
     "capture": "Seleciona uma área para copiar, salvar, editar, ler ou analisar. Só imagem.",
     "record": "Seleciona uma área e grava vídeo ou GIF. Aperte de novo para parar.",
     "ocr": "Seleciona e já copia o texto, sem abrir janela.",
-    "structure": "Abre as tabelas aprendidas para copiar um SELECT, INSERT ou UPDATE pronto. Vale com o "
-                 "autocompletar de estrutura ligado (em Leitura e Análise).",
+    "queries": "Abre as suas consultas guardadas junto de onde você está digitando, como o Windows + V. "
+               "Enter cola no programa; Ctrl+Enter só copia.",
 }
 SAVE_ROWS = [
     ("prints", "Prints", "Quando você copia um print."),
@@ -54,9 +54,9 @@ SWITCHES = [
          "Depois da leitura do Windows, o RapidOCR lê de novo (1 a 4 s) e corrige. Desligado, fica só a do Windows."),
         ("addon_sql", "Análise de SQL, JSON e tabelas",
          "Mostra o botão Análise na leitura quando o texto é uma consulta, um JSON ou uma grade."),
-        ("structure", "Autocompletar de estrutura",
-         "Aprende as tabelas e colunas das consultas que você copia na Análise. Com o atalho, digite parte do nome "
-         "da tabela e copie um SELECT, INSERT ou UPDATE com as colunas."),
+        ("structure", "Aprender tabelas e colunas",
+         "As consultas que você copia ou guarda na Análise ensinam as tabelas e as colunas delas. No painel de "
+         "consultas, a aba Tabelas monta SELECT, INSERT e UPDATE com elas."),
     ]),
 ]
 
@@ -225,8 +225,6 @@ class SettingsDialog(QDialog):
                 sw = Switch(config.option(name))
                 sw.setAccessibleName(title_)
                 sw.toggled.connect(lambda on, n=name: config.set_option(n, on))
-                if name == "structure":  # liga e desliga o atalho da estrutura
-                    sw.toggled.connect(lambda _: self.hotkeysChanged.emit())
                 self.switches[name] = sw
                 if name == "precise_ocr" and not ocr.precise_available():
                     sw.setEnabled(False)

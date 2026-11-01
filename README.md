@@ -30,7 +30,7 @@ notebook):
 - `PrtSc`: print
 - `F7`: gravar vídeo ou GIF / parar a gravação
 - `Ctrl+Shift+T`: **ler texto direto** (selecionou, soltou, o texto já está no clipboard)
-- `Ctrl+Shift+Espaço`: estrutura de tabelas (só com ela ligada; veja abaixo)
+- `Ctrl+Shift+Espaço`: **painel de consultas**, como o `Windows + V` (veja abaixo)
 
 **Depois de copiar** aparece um aviso no canto da tela com a miniatura e atalhos para editar, ler, pesquisar e guardar.
 
@@ -76,15 +76,24 @@ em uma frase o que aquilo é; a galeria guarda o texto final, com as suas corre�
   letra (`1O`) fica marcada com a sugestão (`10`) e "Trocar pelas sugestões" corrige. Copia como Excel, CSV (`;`),
   Markdown (para chat e chamado), `INSERT`, `UPDATE` (escolhendo a coluna do `WHERE`) ou JSON.
 
-**Estrutura de tabelas** (ligue em Configurações › Leitura e Análise): cada consulta que você copia ou salva na
-Análise ensina as tabelas e as colunas que ela cita (`c.nome` com `FROM clientes c` diz que clientes tem nome).
-`Ctrl+Shift+Espaço`, em qualquer programa, abre a lista perto do mouse: digite parte do nome da tabela, escolha
-SELECT, INSERT ou UPDATE (`Tab` troca) e `Enter` copia o comando com as colunas. Fica em
-`%LOCALAPPDATA%\Klick\estrutura.json`.
+**Consultas** (Galeria › Biblioteca › Consultas): todas as consultas que você guarda, numa página só. Na Análise,
+"Guardar consulta" pede um nome (sugere o tipo e as tabelas) e manda para cá; também dá para criar do zero ("Nova
+consulta") e trazer os `.sql` que você já tem (Importar). À esquerda a lista, com as tabelas e quantas vezes cada uma foi
+copiada (as mais usadas em cima); à direita a consulta, com as cores do SQL. O que você edita é guardado sozinho;
+duplo clique ou `Ctrl+C` copia, `Del` exclui. A busca do topo procura no nome e no texto. Exportar junta todas num
+`.sql` só, cada uma com o nome em comentário. Fica em `%LOCALAPPDATA%\Klick\consultas.db`, separada do histórico.
+
+**Painel de consultas** (`Ctrl+Shift+Espaço`, em qualquer programa): como o `Windows + V`, só que das suas consultas.
+Abre pequeno, junto do cursor de texto (ou do mouse), já pronto para digitar: digite para filtrar, setas escolhem,
+`Enter` cola no programa em que você estava e `Ctrl+Enter` só copia. Some ao clicar fora; `Esc` fecha e devolve o foco.
+As mais usadas ficam em cima. `Tab` troca para a aba **Tabelas**: as tabelas que o Klick aprendeu viram SELECT, INSERT
+ou UPDATE com as colunas (setas para os lados trocam o modelo). Para aprender, ligue "Aprender tabelas e colunas" em
+Configurações › Leitura e Análise: cada consulta que você copia ou guarda na Análise ensina as tabelas e colunas que
+ela cita (`c.nome` com `FROM clientes c` diz que clientes tem nome). Ficam em `%LOCALAPPDATA%\Klick\estrutura.json`.
 
 **Configurações** (engrenagem na galeria ou na bandeja): atalhos, onde salvar e por quanto tempo, pasta do Klick, lupa,
 linhas de terço, aviso depois de copiar, perguntar antes de gravar e os padrões de formato/som/qualidade, leitura
-precisa, Análise, estrutura de tabelas, guardar histórico e abrir com o Windows. As mudanças valem na hora.
+precisa, Análise, aprender tabelas e colunas, guardar histórico e abrir com o Windows. As mudanças valem na hora.
 
 **Visual:** a identidade é a "Plumagem", que vem do corvo do ícone. A moldura (barras laterais, painéis sobre a tela,
 avisos, menus e a barra de título) é negro-azulada como a pena; o conteúdo é claro. O brilho furta-cor da pena
@@ -135,7 +144,8 @@ o ffmpeg de verdade, com uma fonte de vídeo sintética no lugar da tela, e são
 | `klick/lens.py` | Pesquisa no Google Lens (página local que envia a imagem) e no Google |
 | `klick/analysis/` | Motor da Análise: consertos do OCR, SQL, JSON, tabelas, o tipo e a estrutura aprendida |
 | `klick/analysis_ui.py` | Janela da Análise |
-| `klick/structure_ui.py` | Autocompletar de estrutura (SELECT, INSERT e UPDATE prontos) |
+| `klick/quick_ui.py`, `focus.py` | Painel de consultas (como o Windows + V) e o foco e a colagem no Windows |
+| `klick/library.py`, `library_ui.py` | Biblioteca de consultas guardadas e a página Consultas da galeria |
 | `klick/audio.py` | Som do computador na gravação (loopback do WASAPI) |
 | `klick/settings_ui.py` | Configurações, com a gravação de atalhos |
 | `klick/theme.py`, `icons.py`, `icon.py`, `widgets.py` | Identidade Plumagem: cores, fontes, formas, ícones, o corvo, botões, aviso |

@@ -13,10 +13,10 @@ DEFAULT_HOTKEYS = {
     "capture": "<print_screen>",
     "record": "<f7>",  # escolhe a área e grava vídeo ou GIF; apertar de novo para
     "ocr": "<ctrl>+<shift>+t",  # OCR direto: seleciona e o texto já vai para o clipboard
-    "structure": "<ctrl>+<shift>+<space>",  # tabelas aprendidas (só com o autocompletar de estrutura ligado)
+    "queries": "<ctrl>+<shift>+<space>",  # painel das consultas guardadas, como o Windows + V
 }
 HOTKEY_NAMES = {"capture": "Print", "record": "Gravar vídeo ou GIF", "ocr": "Ler texto direto",
-                "structure": "Estrutura de tabelas"}
+                "queries": "Painel de consultas"}
 KEY_LABELS = {"print_screen": "PrtSc", "ctrl": "Ctrl", "ctrl_l": "Ctrl", "ctrl_r": "Ctrl", "shift": "Shift",
               "shift_l": "Shift", "shift_r": "Shift", "alt": "Alt", "alt_l": "Alt", "alt_r": "Alt Gr",
               "alt_gr": "Alt Gr", "cmd": "Win", "cmd_l": "Win", "cmd_r": "Win", "page_up": "PgUp",
@@ -51,7 +51,7 @@ OPTIONS = {
     "precise_ocr": True,  # RapidOCR refina a leitura do Windows
     "record_ask": True,  # pergunta som e qualidade antes de gravar
     "addon_sql": True,  # extra: SQL e tabelas na leitura
-    "structure": False,  # aprende tabelas e colunas na Análise e abre o autocompletar pelo atalho
+    "structure": False,  # aprende tabelas e colunas na Análise (aba Tabelas do painel de consultas)
 }
 AUDIO = ("none", "system", "mic", "both")
 QUALITY = ("low", "medium", "high")
@@ -147,14 +147,6 @@ def hotkeys() -> dict[str, str]:
     return {name: str(settings.value(f"hotkeys/{name}", combo)) for name, combo in DEFAULT_HOTKEYS.items()}
 
 
-def active_hotkeys() -> dict[str, str]:
-    """Os atalhos que valem agora: o da estrutura só com o autocompletar ligado."""
-    keys = hotkeys()
-    if not option("structure"):
-        keys.pop("structure", None)
-    return keys
-
-
 def set_hotkey(name: str, combo: str) -> None:
     _settings().setValue(f"hotkeys/{name}", combo)
 
@@ -202,6 +194,11 @@ def history_dir() -> Path:
         return Path(value)
     data = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericDataLocation)
     return Path(data or Path.home()) / "Klick" / "history"
+
+
+def library_path() -> Path:
+    """A biblioteca de consultas guardadas (ao lado do histórico, mas independente dele)."""
+    return history_dir().parent / "consultas.db"
 
 
 def schema_path() -> Path:

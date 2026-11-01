@@ -19,7 +19,8 @@ from html import escape
 from PySide6.QtCore import QRect, QRectF, QRegularExpression, QSize, Qt, QTimer, QVariantAnimation, Signal
 from PySide6.QtGui import (QColor, QFont, QImage, QKeySequence, QPainter, QShortcut, QSyntaxHighlighter,
                            QTextCharFormat, QTextCursor, QTextFormat)
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QFrame, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QFrame, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
+                               QLineEdit,
                                QPlainTextEdit, QScrollArea, QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem,
                                QTextEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
@@ -29,6 +30,7 @@ from klick.analysis import Kind, document, fixes, grid, query
 from klick.analysis.fixes import SQL_KEYWORDS
 from klick.analysis.layout import layout_text
 from klick.icon import app_icon
+from klick.library import suggest_name
 from klick.ocr import OcrResult
 from klick.widgets import Pena, Segmented, Switch, button
 
@@ -411,7 +413,7 @@ class AnalysisWindow(QWidget):
     _done = Signal(object, str)  # resultado, erro (vem das threads do OCR)
 
     def __init__(self, image: QImage, result: OcrResult | None = None, kind: Kind | str | None = None,
-                 refine: bool = True, schema=None):
+                 refine: bool = True, schema=None, library=None):
         super().__init__(None, Qt.WindowType.Window)
         self.setObjectName("window")
         self.setWindowTitle("Klick: análise")
@@ -436,6 +438,7 @@ class AnalysisWindow(QWidget):
         self.resize(1260, 760)
         self._image = image
         self._schema = schema
+        self._library = library  # biblioteca de consultas (Guardar consulta)
         self._raw = ""  # o texto como a leitura montou (com a indentação do print)
         self._result: OcrResult | None = None
         self._kind: Kind = Kind(kind) if kind else Kind.SQL
@@ -535,7 +538,9 @@ class AnalysisWindow(QWidget):
 
         QShortcut(QKeySequence("Escape"), self, activated=self.close)
         QShortcut(QKeySequence("Ctrl+Return"), self, activated=self._copy)
-        self._done.connect(self._on_done)
+        # Sempre pelo loop de eventos: uma leitura que termina antes de a janela acabar de abrir (OCR que falha
+        # na hora) não pode avisar antes de quem abriu a janela estar escutando.
+        self._done.connect(self._on_done, Qt.ConnectionType.QueuedConnection)
         self._set_kind(self._kind)
 
         # Os dois motores; fica a leitura mais limpa (o RapidOCR em modo código costuma ganhar, mas às vezes
@@ -575,8 +580,13 @@ class AnalysisWindow(QWidget):
         self.backup = button("Backup antes", "secondary", "save")
         self.backup.setToolTip("Copia um CREATE TABLE … AS SELECT com as linhas que vão mudar, para voltar se der errado")
         self.backup.clicked.connect(lambda: self._copy_text(query.backup_select(self._query), "Backup copiado"))
+        self.keep_query = button("Guardar consulta", "secondary", "keep")
+        self.keep_query.setToolTip("Guarda com um nome na biblioteca: Galeria > Consultas")
+        self.keep_query.clicked.connect(self._keep_query)
+        self.keep_query.setVisible(self._library is not None)
         row = QHBoxLayout()
         row.addWidget(self.sql_view)
+        row.addWidget(self.keep_query)
         row.addStretch(1)
         row.addWidget(self.preview)
         row.addWidget(self.backup)
@@ -768,7 +778,7 @@ class AnalysisWindow(QWidget):
                                f". Escolhida entre {others + 1} leituras." if others else "."))
         if not self._pending and not self._reported:
             self._reported = True
-            self.recognized.emit(self.current_text())
+            QTimer.singleShot(0, self, lambda: self.recognized.emit(self.current_text()))
 
     def _load(self, result: OcrResult) -> None:
         self._result = result
@@ -1161,6 +1171,22 @@ class AnalysisWindow(QWidget):
             self._schema.learn_query(self.sql.toPlainText())
         elif self._kind is Kind.TABLE and self.table_name.text().strip() and self.header.isChecked():
             self._schema.learn_columns(self.table_name.text(), grid.columns(self.rows(), True))
+
+    def _keep_query(self) -> None:
+        """Guarda a consulta na biblioteca, com o nome que você der (sugere o tipo e as tabelas)."""
+        text = self.sql.toPlainText().strip()
+        if self._library is None or not text:
+            return
+        if (existing := self._library.find_text(text)) is not None:
+            self.message.setText(f"Essa consulta já está na biblioteca como “{existing.name}”.")
+            return
+        name, ok = QInputDialog.getText(self, "Guardar consulta", "Nome da consulta:", QLineEdit.EchoMode.Normal,
+                                        suggest_name(text))
+        if not ok:
+            return
+        self._library.add(name, text)
+        self._learn()
+        self.message.setText(f"“{name.strip() or suggest_name(text)}” guardada em Galeria > Consultas.")
 
     def _save(self) -> None:
         text = self.current_text()

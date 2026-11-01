@@ -19,6 +19,7 @@ PATHS = {
     "rec": f'<circle cx="12" cy="12" r="8" {_S}/><circle cx="12" cy="12" r="3.6" fill="currentColor"/>',
     "gif": f'<rect x="3" y="6" width="18" height="12" rx="1.5" {_S}/><path d="M9.5 10.5H8a1.5 1.5 0 0 0-1.5 1.5 1.5 1.5 0 0 0 1.5 1.5h1.5V12M12 10v4M14.5 14v-4h2.5M14.5 12h2" fill="none" stroke="currentColor" stroke-width="1.5"/>',
     "close": f'<path d="m7 7 10 10M17 7 7 17" {_S}/>',
+    "plus": f'<path d="M12 5v14M5 12h14" {_S}/>',
     "search": f'<circle cx="11" cy="11" r="6" {_S}/><path d="m16 16 4 4" {_S}/>',
     "spot": f'<rect x="3" y="3" width="18" height="18" rx="1.5" fill="currentColor" opacity=".22"/><rect x="8" y="8" width="8" height="8" rx="1" {_S}/>',
     "arrow": f'<path d="M5 19 19 5m0 0h-7m7 0v7" {_S}/>',

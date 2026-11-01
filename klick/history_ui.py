@@ -1,7 +1,7 @@
 """Galeria: as capturas em coleções (prints, gravações, GIFs, leituras e análises), com busca no texto.
 
-Barra lateral na pena (escura): as coleções, o filtro do que está só na galeria e as configurações; um
-marcador desliza até a coleção escolhida. Cada cartão mostra se a captura está só na galeria (e em
+Barra lateral na pena (escura): as coleções, a biblioteca de consultas, o filtro do que está só na
+galeria e as configurações; um marcador desliza até o item escolhido. Cada cartão mostra se a captura está só na galeria (e em
 quantos dias some) ou já guardada na pasta.
 """
 
@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QHBoxLayout, QLabe
 from klick import __author__, config, icons, lens, theme
 from klick.actions import copy_file, copy_image, copy_text
 from klick.history import FOLDER_KIND, Collection, Entry, History
+from klick.library import Library
+from klick.library_ui import LibraryPage
 from klick.icon import app_icon
 from klick.widgets import Pena, button, confirm
 
@@ -274,9 +276,11 @@ class HistoryWindow(QWidget):
     settingsRequested = Signal(str)  # seção para abrir ("" = do começo)
     sqlRequested = Signal(QImage)
 
-    def __init__(self, history: History):
+    def __init__(self, history: History, library: Library | None = None):
         super().__init__(None, Qt.WindowType.Window)
         self._history = history
+        self._library = library if library is not None else Library(config.library_path())
+        self.library_mode = False  # a página Consultas está aberta (no lugar dos cartões)
         self.setObjectName("window")
         self.setWindowTitle("Klick: galeria")
         self.setWindowIcon(app_icon())
@@ -330,6 +334,14 @@ class HistoryWindow(QWidget):
             self._tabs.addButton(item)
             self._tab_buttons[collection] = item
             nav.addWidget(item)
+        nav.addSpacing(14)
+        nav.addWidget(self._section("Biblioteca"))
+        self._library_item = NavItem("Consultas", "sql")
+        self._library_item.setToolTip("Todas as consultas SQL que você guardou, numa página só")
+        self._library_item.clicked.connect(self.show_library)
+        self._library_item.toggled.connect(lambda on: on and self._marker.go(self._library_item))
+        self._tabs.addButton(self._library_item)
+        nav.addWidget(self._library_item)
         nav.addSpacing(14)
         nav.addWidget(self._section("Prazo"))
         self._temp_filter = NavItem("Só na galeria", "clock", theme.TEMP_ON_PENA, theme.TEMP_ON_PENA)
@@ -408,11 +420,14 @@ class HistoryWindow(QWidget):
         stack = QStackedLayout()
         stack.addWidget(self._list)
         stack.addWidget(self._empty)
+        self._library_page = LibraryPage(self._library)
+        stack.addWidget(self._library_page)
         self._stack = stack
 
         self._status = QLabel()
         self._status.setProperty("role", "muted")
         self._status.setFont(theme.font(12, 400))
+        self._library_page.message.connect(self._status.setText)
 
         main = QVBoxLayout()
         main.setContentsMargins(22, 16, 18, 12)
@@ -434,6 +449,7 @@ class HistoryWindow(QWidget):
         QShortcut(QKeySequence.StandardKey.Delete, self, activated=self._delete_selected)
 
         history.changed.connect(self._on_changed)
+        self._library.changed.connect(lambda: self._library_item.set_count(self._library.count()))
         self.refresh()
 
     @staticmethod
@@ -443,24 +459,47 @@ class HistoryWindow(QWidget):
         label.setContentsMargins(14, 0, 0, 4)
         return label
 
+    def _nav_item(self) -> NavItem:
+        return self._library_item if self.library_mode else self._tab_buttons[self.collection]
+
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        self._marker.go(self._tab_buttons[self.collection], animate=False)
+        self._marker.go(self._nav_item(), animate=False)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         if self._marker.isVisible():
-            self._marker.go(self._tab_buttons[self.collection], animate=False)
+            self._marker.go(self._nav_item(), animate=False)
 
     # --- API ---------------------------------------------------------------
 
     def show_collection(self, collection: Collection | None) -> None:
         self.collection = collection
+        self.library_mode = False
         self._tab_buttons[collection].setChecked(True)
         self.refresh()
 
+    def show_library(self, query_id: int | None = None) -> None:
+        """Abre a página Consultas (e, se pedido, já com uma consulta escolhida)."""
+        self.library_mode = True
+        self._library_item.setChecked(True)
+        self.refresh()
+        if query_id is not None:
+            self._library_page.select(query_id)
+
     def refresh(self) -> None:
         query = self._search.text().strip()
+        self._library_item.set_count(self._library.count())
+        self._search.setPlaceholderText("Buscar nas consultas, no nome ou no texto" if self.library_mode
+                                        else "Buscar no texto das capturas, ex.: erro 500")
+        if self.library_mode:
+            self._heading.setText("Consultas")
+            self._stack.setCurrentWidget(self._library_page)
+            self._library_page.refresh(query)
+            count = self._library.count()
+            self._status.setText(f"{count} consulta{'s' if count != 1 else ''} guardada{'s' if count != 1 else ''}. "
+                                 "O que você edita é guardado sozinho; duplo clique ou Ctrl+C copia.")
+            return
         counts = self._history.counts(query)
         for collection, item in self._tab_buttons.items():
             item.set_count(sum(counts.values()) if collection is None else counts[collection])
@@ -501,9 +540,15 @@ class HistoryWindow(QWidget):
 
     def _toggle_temp(self, on: bool) -> None:
         self.temp_only = on
+        if self.library_mode and on:
+            self.show_collection(self.collection)  # o prazo vale para as capturas, não para as consultas
+            return
         self.refresh()
 
     def _open_folder(self) -> None:
+        if self.library_mode:
+            self._open(config.folder("reading"))
+            return
         self._open(config.folder(FOLDER_KIND[self.collection]) if self.collection else config.save_dir())
 
     @staticmethod
@@ -512,6 +557,8 @@ class HistoryWindow(QWidget):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
     def _update_status(self) -> None:
+        if self.library_mode:
+            return
         count = self._list.count()
         if not count or self._stack.currentWidget() is not self._list:
             self._status.setText("")
@@ -534,10 +581,14 @@ class HistoryWindow(QWidget):
         return item.data(ENTRY_ROLE) if item else None
 
     def _copy_selected(self) -> None:
-        if (entry := self._selected()) is not None:
+        if self.library_mode:
+            self._library_page.copy()
+        elif (entry := self._selected()) is not None:
             self._copy(entry)
 
     def _keep_selected(self) -> None:
+        if self.library_mode:
+            return  # as consultas já se guardam sozinhas
         entries = [item.data(ENTRY_ROLE) for item in self._list.selectedItems()]
         self._keep([e for e in entries if e.temp])
 
@@ -557,6 +608,9 @@ class HistoryWindow(QWidget):
             self._status.setText(f"{len(done)} capturas guardadas na pasta")
 
     def _delete_selected(self) -> None:
+        if self.library_mode:
+            self._library_page.delete_current()
+            return
         entries = [item.data(ENTRY_ROLE) for item in self._list.selectedItems()]
         if len(entries) > 1:
             self._delete_many(entries)

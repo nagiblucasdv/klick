@@ -1,15 +1,13 @@
-"""Janela da Análise e o autocompletar de estrutura."""
+"""Janela da Análise."""
 
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import QRectF
 from PySide6.QtGui import QColor, QGuiApplication, QImage
-from PySide6.QtTest import QTest
 
 from klick import config
 from klick.analysis import Kind
 from klick.analysis.schema import Schema
 from klick.analysis_ui import AnalysisWindow
 from klick.ocr import OcrResult, Word
-from klick.structure_ui import StructurePicker
 
 
 def image() -> QImage:
@@ -141,27 +139,3 @@ def test_copy_teaches_the_structure_when_enabled(qapp, tmp_path):
         config.set_option("structure", False)
     assert schema.tables == {"clientes": ["codcli", "nome"], "pedidos": ["codcli", "valor"]}
     window.close()
-
-
-def test_structure_picker_searches_switches_and_copies(qapp, tmp_path):
-    schema = Schema(tmp_path / "estrutura.json")
-    schema.learn_query("select c.codcli, c.nome from clientes c join pedidos p on p.codcli = c.codcli")
-    picker = StructurePicker(schema)
-    copied = []
-    picker.copied.connect(lambda table, kind: copied.append((table, kind)))
-    picker.show_near()
-    assert [picker.tables.item(i).text() for i in range(picker.tables.count())] == ["clientes", "pedidos"]
-    QTest.keyClicks(picker.search, "ped")
-    assert picker.current_table() == "pedidos"
-    QTest.keyClick(picker.search, Qt.Key.Key_Tab)
-    assert picker.template.value == "insert"
-    QTest.keyClick(picker.search, Qt.Key.Key_Return)
-    assert copied == [("pedidos", "INSERT")]
-    assert QGuiApplication.clipboard().text() == "INSERT INTO pedidos (codcli)\nVALUES (/* codcli */);"
-
-
-def test_structure_picker_without_tables_explains(qapp, tmp_path):
-    picker = StructurePicker(Schema(tmp_path / "vazia.json"))
-    assert "Ainda não conheço nenhuma tabela" in picker.preview.toPlainText() and not picker.forget.isEnabled()
-    picker.accept()  # nada para copiar: não quebra
-    picker.close()
