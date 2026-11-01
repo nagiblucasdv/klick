@@ -6,6 +6,7 @@ Ficam do lado de fora da área e, no Windows, também são excluídos da captura
 
 from __future__ import annotations
 
+import math
 import sys
 
 from PySide6.QtCore import QRect, QRectF, Qt, QTimer, QVariantAnimation, Signal
@@ -29,7 +30,7 @@ def exclude_from_capture(widget: QWidget) -> None:
 
 
 class RecordingFrame(QWidget):
-    """Moldura vermelha com cantos de visor em volta da área, que não recebe cliques."""
+    """Moldura vermelha com cantos de visor em volta da área, que não recebe cliques. Os cantos pulsam."""
 
     def __init__(self, area: QRect):
         super().__init__(
@@ -41,6 +42,15 @@ class RecordingFrame(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         pad = BORDER + 2
         self.setGeometry(area.adjusted(-pad, -pad, pad, pad))
+        self._pulse = 1.0
+        self._beat = QVariantAnimation(self, startValue=0.0, endValue=1.0, duration=1800, loopCount=-1)
+        self._beat.valueChanged.connect(self._on_beat)
+        if theme.motion():
+            self._beat.start()
+
+    def _on_beat(self, value) -> None:
+        self._pulse = 0.5 + 0.5 * math.cos(2 * math.pi * float(value))  # 1 -> 0 -> 1, suave
+        self.update()
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -51,7 +61,9 @@ class RecordingFrame(QWidget):
         r = QRectF(self.rect()).adjusted(BORDER, BORDER, -BORDER, -BORDER)
         p.setPen(QPen(QColor(theme.REC), 1))
         p.drawRect(r)
-        pen = QPen(QColor(theme.REC), BORDER * 2)
+        color = QColor(theme.REC)
+        color.setAlphaF(0.55 + 0.45 * self._pulse)
+        pen = QPen(color, BORDER * 2)
         pen.setCapStyle(Qt.PenCapStyle.SquareCap)
         p.setPen(pen)
         for x, dx in ((r.left(), CORNER), (r.right(), -CORNER)):
@@ -76,11 +88,11 @@ class RecordingControls(Panel):
         layout.setContentsMargins(30, 6, 6, 6)
         layout.setSpacing(12)
         self._time = QLabel("00:00")
-        self._time.setFont(theme.font(15, 600, mono=True))
-        self._meta = QLabel(f"{area.width()} × {area.height()} · {label}")
-        self._meta.setFont(theme.font(11, 400, mono=True))
-        self._meta.setStyleSheet(f"color: {theme.G400};")
-        self._stop = button("Parar", "secondary")
+        self._time.setFont(theme.font(18, 600, display=True))
+        self._meta = QLabel(f"{area.width()} × {area.height()}, {label}")
+        self._meta.setFont(theme.font(12.5, display=True))
+        self._meta.setStyleSheet(f"color: {theme.ON_PENA_MUTED};")
+        self._stop = button("Parar", "secondary", on_pena=True)
         self._stop.setIcon(icons.icon("stop", theme.REC, size=16))
         self._stop.setToolTip(theme.tip("Parar a gravação", config.hotkey_label(config.hotkeys()["record"])))
         self._stop.clicked.connect(self.stopRequested.emit)
@@ -99,7 +111,7 @@ class RecordingControls(Panel):
         self._timer.stop()
         self._busy = True
         self._time.setText(text)
-        self._time.setFont(theme.font(13, 600))
+        self._time.setFont(theme.font(14, 600, display=True))
         self._meta.setText("")
         self._stop.hide()
         self.setMinimumWidth(self.width())
@@ -125,7 +137,7 @@ class RecordingControls(Panel):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         cy = self.height() / 2
-        color = QColor(theme.S500 if self._busy else theme.REC)
+        color = QColor(theme.SIGNAL if self._busy else theme.REC)
         halo = QColor(color)
         halo.setAlpha(60)
         p.setPen(Qt.PenStyle.NoPen)
@@ -137,12 +149,12 @@ class RecordingControls(Panel):
         if self._busy:
             # barra indeterminada: um trecho laranja correndo no trilho
             track = QRectF(self._time.geometry().right() + 14, cy - 2, max(60, self.width() - self._time.geometry().right() - 28), 4)
-            p.setBrush(QColor(theme.G700))
+            p.setBrush(QColor(255, 255, 255, 30))
             p.drawRoundedRect(track, 2, 2)
             seg = track.width() * 0.35
             x = track.left() + (track.width() + seg) * self._phase - seg
             p.setClipRect(track)
-            p.setBrush(QColor(theme.S500))
+            p.setBrush(theme.sheen(QRectF(x, track.top(), seg, track.height())))
             p.drawRoundedRect(QRectF(x, track.top(), seg, track.height()), 2, 2)
 
     def _place(self, area: QRect) -> None:
@@ -202,7 +214,7 @@ class RecordSetup(QFrame):
 
         self._qualities = QUALITIES
         self.setObjectName("panel")
-        self.setStyleSheet(theme.dark_panel_stylesheet())
+        self.setStyleSheet(theme.panel_stylesheet())
         self.setCursor(Qt.CursorShape.ArrowCursor)
         self.setFixedWidth(452)
         col = QVBoxLayout(self)
@@ -212,9 +224,9 @@ class RecordSetup(QFrame):
         head = QHBoxLayout()
         head.setSpacing(8)
         title = QLabel("Gravar área")
-        title.setFont(theme.font(17, 800))
+        title.setFont(theme.font(19, 600, display=True))
         self._size = QLabel()
-        self._size.setFont(theme.font(12, 500, mono=True))
+        self._size.setFont(theme.font(13, display=True))
         self._size.setProperty("role", "muted")
         head.addWidget(title)
         head.addWidget(self._size)
@@ -229,7 +241,7 @@ class RecordSetup(QFrame):
         self._sound_section = self._section("Som")
         self._sound_hint = QLabel()
         self._sound_hint.setProperty("role", "muted")
-        self._sound_hint.setFont(theme.font(12, 500))
+        self._sound_hint.setFont(theme.font(12.5))
         self.sound.changed.connect(lambda key: self._sound_hint.setText(SOUND_HINTS[key]))
         self._sound_hint.setText(SOUND_HINTS[self.sound.value])
         col.addWidget(self._sound_section)
@@ -239,7 +251,7 @@ class RecordSetup(QFrame):
         self.quality = Segmented([(k, q.label) for k, q in QUALITIES.items()], config.record_quality())
         self._quality_hint = QLabel()
         self._quality_hint.setProperty("role", "muted")
-        self._quality_hint.setFont(theme.font(12, 500))
+        self._quality_hint.setFont(theme.font(12.5))
         self.quality.changed.connect(self._show_quality)
         col.addWidget(self._section("Qualidade"))
         col.addWidget(self.quality)
@@ -247,13 +259,13 @@ class RecordSetup(QFrame):
 
         foot = QHBoxLayout()
         foot.setSpacing(6)
-        back = button("Voltar", "ghost")
+        back = button("Voltar", "ghost", on_pena=True)
         back.setToolTip(theme.tip("Voltar à seleção", "Esc"))
         back.clicked.connect(self.backRequested.emit)
         self.start = button("Iniciar gravação", "danger", "rec")
         self.start.setIcon(icons.icon("rec", "#ffffff", size=16))
         self.start.setStyleSheet(f"QPushButton {{ background: {theme.REC}; color: #ffffff; border-color: {theme.REC}; }}"
-                                 "QPushButton:hover { background: #d4513c; }")
+                                 "QPushButton:hover { background: #f0625f; }")
         self.start.setToolTip(theme.tip("Começar a gravar", "Enter"))
         self.start.clicked.connect(self.accept)
         foot.addWidget(back)
@@ -272,7 +284,7 @@ class RecordSetup(QFrame):
 
     @staticmethod
     def _section(text: str) -> QLabel:
-        label = QLabel(text.upper())
+        label = QLabel(text)
         label.setProperty("role", "section")
         return label
 

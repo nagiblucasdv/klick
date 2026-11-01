@@ -197,7 +197,7 @@ class Recorder(QObject):
         self._sounds: list[Path] = []
         self._mic = False
         self.last_duration = 0.0  # segundos da última gravação, medido ao parar
-        self.warning = ""  # fonte de som que falhou na última gravação
+        self.warning = ""  # o que saiu diferente do pedido na última gravação (frase pronta)
 
     @property
     def busy(self) -> bool:
@@ -226,13 +226,13 @@ class Recorder(QObject):
         sources = () if fmt is RecordFormat.GIF else audio.SOURCES.get(sound, ())
         mic = microphone(ffmpeg) if "mic" in sources else None
         if "mic" in sources and mic is None:
-            self.warning = "Nenhum microfone encontrado"
+            self.warning = "Nenhum microfone encontrado: o vídeo ficou sem a sua voz"
         self._mic = mic is not None
-        self._capture = audio.AudioCapture("system") if "system" in sources and audio.available() else None
+        self._capture = audio.AudioCapture() if "system" in sources and audio.available() else None
         if "system" in sources and self._capture is None:
-            self.warning = "Som do sistema indisponível"
+            self.warning = "Som do computador indisponível: o vídeo ficou sem ele"
         self._sounds = []
-        self._target = output_dir / config.default_filename(ext=fmt.value)
+        self._target = config.free_path(output_dir, config.default_filename(ext=fmt.value))
         if fmt is RecordFormat.GIF or self._capture is not None:
             fd, tmp = tempfile.mkstemp(prefix="klick_", suffix=".mp4")
             os.close(fd)
@@ -265,7 +265,7 @@ class Recorder(QObject):
         if self._capture is not None:
             self._sounds = self._capture.stop()
             if self._capture.errors:
-                self.warning = "Som do sistema não gravou"
+                self.warning = "O som do computador não gravou: o vídeo ficou sem ele"
             self._capture = None
         process = self._process
         process.write(b"q")  # o ffmpeg finaliza o arquivo direitinho ao receber "q"
@@ -314,12 +314,19 @@ class Recorder(QObject):
 
     def _on_converted(self, code: int, status: QProcess.ExitStatus) -> None:
         error = self._stderr()
-        self._video.unlink(missing_ok=True)
         self._drop_sounds()
         if code != 0 or not self._target.exists():
-            what = "o GIF" if self._format is RecordFormat.GIF else "o vídeo com som"
-            self._fail(f"Falha ao gerar {what}: {error or f'código {code}'}")
+            # Não perde a gravação: fica o vídeo como saiu (sem som, ou MP4 no lugar do GIF).
+            log.warning("ffmpeg falhou ao converter: %s", error or f"código {code}")
+            self._target.unlink(missing_ok=True)
+            gif = self._format is RecordFormat.GIF
+            if gif:
+                self._target = config.free_path(self._target.parent, self._target.with_suffix(".mp4").name)
+            shutil.move(str(self._video), str(self._target))
+            self.warning = "Não deu para gerar o GIF; ficou o vídeo" if gif else "Não deu para juntar o som"
+            self._done()
             return
+        self._video.unlink(missing_ok=True)
         self._done()
 
     def _drop_sounds(self) -> None:

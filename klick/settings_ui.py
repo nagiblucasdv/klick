@@ -26,6 +26,8 @@ HOTKEY_TEXT = {
     "capture": "Seleciona uma área para copiar, salvar, editar, ler ou analisar. Só imagem.",
     "record": "Seleciona uma área e grava vídeo ou GIF. Aperte de novo para parar.",
     "ocr": "Seleciona e já copia o texto, sem abrir janela.",
+    "structure": "Abre as tabelas aprendidas para copiar um SELECT, INSERT ou UPDATE pronto. Vale com o "
+                 "autocompletar de estrutura ligado (em Leitura e Análise).",
 }
 SAVE_ROWS = [
     ("prints", "Prints", "Quando você copia um print."),
@@ -52,6 +54,9 @@ SWITCHES = [
          "Depois da leitura do Windows, o RapidOCR lê de novo (1 a 4 s) e corrige. Desligado, fica só a do Windows."),
         ("addon_sql", "Análise de SQL, JSON e tabelas",
          "Mostra o botão Análise na leitura quando o texto é uma consulta, um JSON ou uma grade."),
+        ("structure", "Autocompletar de estrutura",
+         "Aprende as tabelas e colunas das consultas que você copia na Análise. Com o atalho, digite parte do nome "
+         "da tabela e copie um SELECT, INSERT ou UPDATE com as colunas."),
     ]),
 ]
 
@@ -99,7 +104,7 @@ class ShortcutButton(QPushButton):
         super().__init__(config.hotkey_label(config.hotkeys()[name]))
         self.name = name
         self.setProperty("variant", "secondary")
-        self.setFont(theme.font(12.5, 600, mono=True))
+        self.setFont(theme.font(13.5, 600, display=True))
         self.setMinimumWidth(150)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("Clique e aperte a combinação nova. Funciona com teclas do FN do notebook.")
@@ -108,11 +113,20 @@ class ShortcutButton(QPushButton):
         self.clicked.connect(self.listen)
 
     def listen(self) -> None:
+        if self._recorder.active:
+            return  # segundo clique enquanto espera: continua esperando, sem abrir outra escuta
         self.listening.emit(True)
         if not self._recorder.start():
             self.listening.emit(False)
             return
         self.setText("Aperte as teclas…")
+
+    def cancel(self) -> None:
+        """Para de esperar a combinação (a janela fechou no meio)."""
+        if self._recorder.active:
+            self._recorder.stop()
+            self.show_combo(config.hotkeys()[self.name])
+            self.listening.emit(False)
 
     def show_combo(self, combo: str) -> None:
         self.setText(config.hotkey_label(combo))
@@ -133,14 +147,12 @@ class SettingsDialog(QDialog):
 
     def __init__(self, parent: QWidget | None = None, section: str = ""):
         super().__init__(parent, Qt.WindowType.Dialog)
-        scheme = theme.window_scheme()
         self.setObjectName("window")
         self.setWindowTitle("Klick: configurações")
         self.setWindowIcon(app_icon())
-        self.setStyleSheet(theme.window_stylesheet(scheme) + f"""
-            QFrame#group {{ background: {scheme.surface}; border: 1px solid {scheme.line};
-                border-radius: {theme.WINDOW_RADIUS}px; }}
-            QFrame#rule {{ background: {scheme.line}; }}""")
+        self.setStyleSheet(theme.window_stylesheet() + f"""
+            QFrame#group {{ background: {theme.SURFACE}; border: 1px solid {theme.LINE}; border-radius: {theme.RADIUS}px; }}
+            QFrame#rule {{ background: {theme.LINE}; }}""")
         self.resize(640, 760)
         self.switches: dict[str, Switch] = {}
         self.shortcuts: dict[str, ShortcutButton] = {}
@@ -154,7 +166,7 @@ class SettingsDialog(QDialog):
         col.setSpacing(10)
 
         heading = QLabel("Configurações")
-        heading.setFont(theme.font(24, 800))
+        heading.setFont(theme.font(28, 600, display=True))
         col.addWidget(heading)
 
         group = self._group("Atalhos", col, "hotkeys")
@@ -195,16 +207,16 @@ class SettingsDialog(QDialog):
         open_.clicked.connect(lambda: self._open(config.save_dir()))
         self._rule(group)
         title = QLabel("Pasta do Klick")
-        title.setFont(theme.font(13.5, 700))
+        title.setFont(theme.font(13.5, 600))
         group.addWidget(title)
         line = QHBoxLayout()
         line.addWidget(self._folder, 1)
         line.addWidget(open_)
         line.addWidget(change)
         group.addLayout(line)
-        sub = QLabel("Dentro dela: " + " · ".join(f"{name}/" for name in config.FOLDERS.values()))
+        sub = QLabel("Dentro dela: " + ", ".join(f"{name}/" for name in config.FOLDERS.values()))
         sub.setProperty("role", "muted")
-        sub.setFont(theme.font(11.5, 500, mono=True))
+        sub.setFont(theme.font(12))
         group.addWidget(sub)
 
         for section, rows in SWITCHES:
@@ -213,6 +225,8 @@ class SettingsDialog(QDialog):
                 sw = Switch(config.option(name))
                 sw.setAccessibleName(title_)
                 sw.toggled.connect(lambda on, n=name: config.set_option(n, on))
+                if name == "structure":  # liga e desliga o atalho da estrutura
+                    sw.toggled.connect(lambda _: self.hotkeysChanged.emit())
                 self.switches[name] = sw
                 if name == "precise_ocr" and not ocr.precise_available():
                     sw.setEnabled(False)
@@ -234,9 +248,9 @@ class SettingsDialog(QDialog):
             self.switches["startup"] = start
             self._row(group, "Abrir com o Windows", "O Klick já começa na bandeja quando você liga o computador.", start)
 
-        about = QLabel(f"Klick {__version__} · criado por {__author__}")
+        about = QLabel(f"Klick {__version__}, criado por {__author__}")
         about.setProperty("role", "muted")
-        about.setFont(theme.font(11.5, 500))
+        about.setFont(theme.font(12))
         about.setAlignment(Qt.AlignmentFlag.AlignCenter)
         col.addSpacing(8)
         col.addWidget(about)
@@ -267,9 +281,9 @@ class SettingsDialog(QDialog):
     # --- montagem ----------------------------------------------------------
 
     def _group(self, title: str, col: QVBoxLayout, anchor: str = "") -> QVBoxLayout:
-        label = QLabel(title.upper())
+        label = QLabel(title)
         label.setProperty("role", "section")
-        label.setFont(theme.font(11, 800, caps=True))
+        label.setFont(theme.font(15, 600, display=True))
         col.addSpacing(8)
         col.addWidget(label)
         frame = QFrame(objectName="group")
@@ -293,11 +307,11 @@ class SettingsDialog(QDialog):
         words = QVBoxLayout()
         words.setSpacing(2)
         head = QLabel(title)
-        head.setFont(theme.font(13.5, 700))
+        head.setFont(theme.font(13.5, 600))
         body = QLabel(text)
         body.setProperty("role", "muted")
         body.setWordWrap(True)
-        body.setFont(theme.font(12, 500))
+        body.setFont(theme.font(12.5))
         words.addWidget(head)
         words.addWidget(body)
         if below:  # controle largo (Segmented): fica embaixo do texto
@@ -323,7 +337,12 @@ class SettingsDialog(QDialog):
                   below=True)
         text = "Computador e microfone." if audio.available() else "Só o microfone (o som do computador não está disponível)."
         self._row(group, "Som padrão", text, sound, below=True)
-        self._row(group, "Qualidade padrão", "Baixa 15 fps · Média 30 fps · Alta 60 fps.", quality, below=True)
+        self._row(group, "Qualidade padrão", "Baixa 15 fps, média 30 fps, alta 60 fps.", quality, below=True)
+
+    def done(self, result: int) -> None:
+        for shortcut in self.shortcuts.values():
+            shortcut.cancel()
+        super().done(result)
 
     # --- ações -------------------------------------------------------------
 

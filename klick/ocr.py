@@ -247,13 +247,21 @@ def recognize_best(image: QImage, language: str | None = None) -> Future[str]:
         return recognize(image, language)
     outer: Future[str] = Future()
 
+    def fallback() -> None:
+        windows = recognize(image, language)
+        windows.add_done_callback(
+            lambda f: outer.set_exception(f.exception()) if f.exception() else outer.set_result(f.result()))
+
     def done(future: Future) -> None:
         try:
-            outer.set_result(future.result().text)
+            text = future.result().text
         except Exception:  # noqa: BLE001 - se o preciso falhar, o do Windows ainda serve
-            fallback = recognize(image, language)
-            fallback.add_done_callback(
-                lambda f: outer.set_exception(f.exception()) if f.exception() else outer.set_result(f.result()))
+            fallback()
+            return
+        if text.strip():
+            outer.set_result(text)
+        else:
+            fallback()  # o preciso não achou nada: o do Windows às vezes acha
 
     recognize_precise(image).add_done_callback(done)
     return outer

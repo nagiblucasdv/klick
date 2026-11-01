@@ -218,12 +218,7 @@ class History(QObject):
     def delete(self, entry_id: int, remove_file: bool = False) -> None:
         """Tira a captura da galeria. Com `remove_file`, apaga também o arquivo da gravação ou do GIF;
         sem, ele continua na pasta onde foi salvo."""
-        if remove_file and (entry := self.get(entry_id)) is not None and entry.media:
-            entry.media.unlink(missing_ok=True)
-        with self._db:
-            self._db.execute("DELETE FROM captures WHERE id = ?", (entry_id,))
-        self._image_path(entry_id).unlink(missing_ok=True)
-        self._thumb_path(entry_id).unlink(missing_ok=True)
+        self._remove(entry_id, remove_file)
         self.changed.emit()
 
     def keep(self, entry_id: int) -> Path | None:
@@ -238,14 +233,14 @@ class History(QObject):
         name = config.default_filename(entry.created_at)
         media, saved = entry.media, entry.saved
         if entry.media:
-            target = folder / entry.media.name
+            target = config.free_path(folder, entry.media.name)
             shutil.move(str(entry.media), target)
             media = target
         elif entry.collection in (Collection.READING, Collection.ANALYSIS) and entry.text.strip():
-            saved = folder / Path(name).with_suffix(".txt").name
+            saved = config.free_path(folder, Path(name).with_suffix(".txt").name)
             saved.write_text(entry.text, encoding="utf-8")
         else:
-            saved = folder / name
+            saved = config.free_path(folder, name)
             shutil.copyfile(entry.image_path, saved)
         with self._db:
             self._db.execute("UPDATE captures SET temp = 0, media = ?, saved = ? WHERE id = ?",
@@ -268,13 +263,20 @@ class History(QObject):
         return self._db.execute("SELECT COUNT(*) FROM captures WHERE temp = 1").fetchone()[0]
 
     def prune(self, keep: int) -> None:
-        old = [row[0] for row in self._db.execute(
-            "SELECT id FROM captures ORDER BY id DESC LIMIT -1 OFFSET ?", (keep,))]
-        for entry_id in old:
-            with self._db:
-                self._db.execute("DELETE FROM captures WHERE id = ?", (entry_id,))
-            self._image_path(entry_id).unlink(missing_ok=True)
-            self._thumb_path(entry_id).unlink(missing_ok=True)
+        """Passou do limite: sai o mais antigo. A gravação que só estava na galeria vai junto (ninguém
+        mais acharia o arquivo); a que foi guardada na pasta fica lá."""
+        old = [(row[0], bool(row[1])) for row in self._db.execute(
+            "SELECT id, temp FROM captures ORDER BY id DESC LIMIT -1 OFFSET ?", (keep,))]
+        for entry_id, temp in old:
+            self._remove(entry_id, remove_file=temp)
+
+    def _remove(self, entry_id: int, remove_file: bool) -> None:
+        if remove_file and (entry := self.get(entry_id)) is not None and entry.media:
+            entry.media.unlink(missing_ok=True)
+        with self._db:
+            self._db.execute("DELETE FROM captures WHERE id = ?", (entry_id,))
+        self._image_path(entry_id).unlink(missing_ok=True)
+        self._thumb_path(entry_id).unlink(missing_ok=True)
 
     # --- internos ----------------------------------------------------------
 

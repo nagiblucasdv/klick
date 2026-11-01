@@ -61,10 +61,10 @@ def save_image(image: QImage) -> Path | None:
 
 
 def store_image(image: QImage, kind: str = "prints") -> Path:
-    """Grava direto na pasta do tipo, sem perguntar (usado pelo "salvar todo print")."""
+    """Grava direto na pasta do tipo, sem perguntar (prints com "Onde salvar: na pasta")."""
     directory = config.folder(kind)
     directory.mkdir(parents=True, exist_ok=True)
-    target = directory / config.default_filename()
+    target = config.free_path(directory, config.default_filename())
     if not image.save(str(target)):
         raise OSError(f"Não foi possível salvar em {target}")
     return target
@@ -74,6 +74,6 @@ def store_text(text: str, ext: str = "txt") -> Path:
     """Grava o texto lido na pasta Leitura (.txt, ou .sql/.csv vindo da janela de SQL)."""
     directory = config.folder("reading")
     directory.mkdir(parents=True, exist_ok=True)
-    target = directory / config.default_filename(ext=ext)
+    target = config.free_path(directory, config.default_filename(ext=ext))
     target.write_text(text, encoding="utf-8")
     return target

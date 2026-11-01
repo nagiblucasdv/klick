@@ -96,6 +96,10 @@ class KeyRecorder(QObject):
         self._listener.start()
         return True
 
+    @property
+    def active(self) -> bool:
+        return self._listener is not None
+
     def stop(self) -> None:
         if self._listener is not None:
             self._listener.stop()

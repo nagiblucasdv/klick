@@ -1,82 +1,63 @@
-"""Identidade Névoa: cores, fontes e folhas de estilo do Klick.
+"""Identidade Plumagem: cores, fontes, formas e folhas de estilo do Klick.
 
-Vidro claro sobre areia: superfícies quase brancas e translúcidas, verde-petróleo só nas
-ações, vermelho só para gravar, âmbar para o que é temporário. A fonte é a do Windows (Segoe UI),
-nítida em qualquer tamanho, com a hierarquia feita pelo peso; números e atalhos em Consolas. Cantos bem
-arredondados e botões em pílula.
+Vem do corvo do ícone. A moldura (barras laterais, painéis sobre a tela, avisos, menus) é negro-azulada
+como a pena; o conteúdo é claro, para ler bem. O brilho furta-cor da pena (verde-água, índigo, violeta)
+aparece só no que está ativo: a seleção, o foco, a ação principal. Cantos retos de 4 px, e os painéis
+ganham um corte em diagonal no canto de cima, como a ponta de uma pena.
 
-Os nomes das cores (G*, A*, S*) vêm das identidades anteriores e foram mantidos para o
-resto do código: G* são as superfícies e linhas, A300 e PAPER o texto, S* a ação.
+Bahnschrift (a fonte técnica do Windows) nos títulos, números e rótulos; Segoe UI no texto corrido;
+Consolas no código. As três vêm com o sistema e ficam nítidas em qualquer tamanho.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import sys
 from functools import cache
 
-import sys
-
-from PySide6.QtCore import QEvent, QObject, Qt
-from PySide6.QtGui import QColor, QFont, QGuiApplication, QPalette
+from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QLinearGradient, QPainterPath, QPalette
 
 FAMILY = "Segoe UI"
+DISPLAY = "Bahnschrift"
 MONO = "Consolas"
 
-# Superfícies e linhas, da página (950) à linha mais forte (600); 500 e 400 são textos apagados.
-G950, G900, G850, G800, G700, G600, G500, G400 = (
-    "#f3f0eb", "#fbf9f6", "#ffffff", "#efeae3", "#e2dbd0", "#cfc6b9", "#8f867b", "#5a534b")
-A300 = "#4a443d"  # texto de ícones e botões
-PAPER = "#1e1b18"  # texto principal
-# Ação (verde-petróleo): 600 é o tom para texto; SOFT é o fundo do que está escolhido.
-S400, S500, S600 = "#139482", "#0e7c70", "#0b6359"
-SOFT = "#ddf1ee"
-# Estados: gravar, ok, aviso e o selo do que é temporário.
-OK, REC, WARN = "#1f8a5b", "#c2412d", "#9a5b00"
-DATA = S600  # números e medidas
-TEMP_FG, TEMP_BG = "#7a4a00", "#fbefd9"
+# Moldura: a pena.
+PENA, PENA_2, PENA_3, PENA_LINE = "#121821", "#1a2230", "#243042", "#2a3546"
+ON_PENA, ON_PENA_MUTED = "#e9eef3", "#9aa6b2"
+# Conteúdo claro.
+PAGE, SURFACE, FIELD, SUNKEN = "#f3f5f7", "#ffffff", "#ffffff", "#e9edf1"
+LINE, LINE_STRONG = "#d6dde4", "#c3ccd5"
+INK, INK_2, MUTED, FAINT = "#10161d", "#2b3540", "#5a6672", "#8b96a1"
+# Ação: índigo; o brilho furta-cor só no que está ativo.
+ACCENT, ACCENT_HOVER, ACCENT_TEXT, ACCENT_SOFT = "#4b55e0", "#5c66f0", "#3c45c4", "#e7e9fd"
+ON_ACCENT = "#ffffff"
+SHEEN = ("#22bfb0", "#5c68f2", "#a35ff5")
+SIGNAL = "#2bd4c4"  # foco e cantos da seleção sobre a tela
+# Estados.
+OK, REC, WARN = "#1f8a5b", "#e5484d", "#9a5b00"
+TEMP_FG, TEMP_BG, TEMP_ON_PENA = "#9a5b00", "#fbeed6", "#f0b34a"
 DANGER_BG, DANGER_FG, DANGER_LINE = "#fdecea", "#b42318", "#f4c7c1"
-INK = "#ffffff"  # texto sobre a cor de ação
 
-GLASS = QColor(255, 253, 250, 214)  # painéis sobre a tela congelada (com o fundo desfocado por baixo)
-GLASS_LINE = QColor(255, 255, 255, 235)
-PANE = QColor(255, 255, 255, 150)  # vidro das janelas, sobre a névoa (menu lateral, cartões)
-PANE_STRONG = QColor(255, 255, 255, 215)  # o mesmo vidro com o mouse em cima
-# A névoa do fundo das janelas: bruma verde-petróleo, menta e areia sobre a página.
-MIST = (QColor(19, 148, 130, 60), QColor(180, 222, 214, 150), QColor(234, 216, 192, 150))
+GLASS = QColor(18, 24, 33, 236)  # painéis por cima da tela congelada
+GLASS_LINE = QColor(255, 255, 255, 34)
+DIM = QColor(10, 14, 20, 125)  # escurecimento fora da seleção
 
-RADIUS = 9  # controles (campos, botões quadrados)
-PILL = 17  # botões em pílula de 34 px
-WINDOW_RADIUS = 14  # cartões e painéis
-
-DIM = QColor(30, 27, 24, 110)  # escurecimento fora da seleção
-
-
-@dataclass(frozen=True)
-class Scheme:
-    """Cores das janelas (galeria, leitura, análise, configurações)."""
-    bg: str
-    surface: str
-    field: str
-    fg: str
-    muted: str
-    line: str
-
-
-LIGHT = Scheme(G950, G900, G850, PAPER, G400, G700)
+RADIUS = 4  # tudo: botões, campos, cartões
+CUT = 12  # corte em diagonal no canto de cima, à direita, dos painéis e cartões
 
 
 def apply(app: QGuiApplication) -> None:
-    """Esquema claro (mesmo com o Windows no modo escuro) e a paleta da Névoa no app todo."""
+    """Esquema claro no conteúdo (mesmo com o Windows no modo escuro) e a paleta da Plumagem no app todo."""
     app.styleHints().setColorScheme(Qt.ColorScheme.Light)
     palette = QPalette()
-    for role, color in ((QPalette.ColorRole.Window, G950), (QPalette.ColorRole.Base, G850),
-                        (QPalette.ColorRole.AlternateBase, G900), (QPalette.ColorRole.Button, G900),
-                        (QPalette.ColorRole.WindowText, PAPER), (QPalette.ColorRole.Text, PAPER),
-                        (QPalette.ColorRole.ButtonText, PAPER), (QPalette.ColorRole.PlaceholderText, G500),
-                        (QPalette.ColorRole.Highlight, SOFT), (QPalette.ColorRole.HighlightedText, S600),
-                        (QPalette.ColorRole.ToolTipBase, G900), (QPalette.ColorRole.ToolTipText, PAPER),
-                        (QPalette.ColorRole.Link, S600), (QPalette.ColorRole.Mid, G600),
-                        (QPalette.ColorRole.Midlight, G700), (QPalette.ColorRole.Light, G850)):
+    for role, color in ((QPalette.ColorRole.Window, PAGE), (QPalette.ColorRole.Base, FIELD),
+                        (QPalette.ColorRole.AlternateBase, PAGE), (QPalette.ColorRole.Button, SURFACE),
+                        (QPalette.ColorRole.WindowText, INK), (QPalette.ColorRole.Text, INK),
+                        (QPalette.ColorRole.ButtonText, INK), (QPalette.ColorRole.PlaceholderText, FAINT),
+                        (QPalette.ColorRole.Highlight, ACCENT_SOFT), (QPalette.ColorRole.HighlightedText, ACCENT_TEXT),
+                        (QPalette.ColorRole.ToolTipBase, PENA), (QPalette.ColorRole.ToolTipText, ON_PENA),
+                        (QPalette.ColorRole.Link, ACCENT_TEXT), (QPalette.ColorRole.Mid, LINE_STRONG),
+                        (QPalette.ColorRole.Midlight, LINE), (QPalette.ColorRole.Light, SURFACE)):
         palette.setColor(role, QColor(color))
     app.setPalette(palette)
     app.setFont(font(13))
@@ -87,7 +68,7 @@ def apply(app: QGuiApplication) -> None:
 
 
 class _TitleBars(QObject):
-    """Barra de título na cor da página: sem isso, o Windows no modo escuro deixa uma faixa preta em cima."""
+    """Barra de título da cor da pena, com o texto claro: a moldura da janela é a mesma das barras."""
 
     def eventFilter(self, obj, event) -> bool:
         if (event.type() == QEvent.Type.Show and obj.isWidgetType() and obj.isWindow()
@@ -105,33 +86,69 @@ def title_bar(hwnd: int) -> None:
         return c.red() | c.green() << 8 | c.blue() << 16
 
     dwm = ctypes.windll.dwmapi
-    for attribute, value in ((20, 0), (35, bgr(G950)), (36, bgr(PAPER))):  # modo escuro, fundo, texto
+    # 20: modo escuro (os botões de fechar ficam claros); 35 e 36: cor do fundo e do texto; 34: borda.
+    for attribute, value in ((20, 1), (35, bgr(PENA)), (36, bgr(ON_PENA)), (34, bgr(PENA))):
         v = ctypes.c_int(value)
         dwm.DwmSetWindowAttribute(hwnd, attribute, ctypes.byref(v), ctypes.sizeof(v))
 
 
-def font(px: float, weight: int = 500, width: int = 100, mono: bool = False, caps: bool = False) -> QFont:
-    """Fonte em pixels. `width` acima de 100 (títulos) só reforça o peso; `caps` é para rótulos de seção."""
-    f = QFont(MONO if mono else FAMILY)
+def font(px: float, weight: int = 400, display: bool = False, mono: bool = False) -> QFont:
+    """Fonte em pixels. `display` é a Bahnschrift (títulos, números, rótulos); `mono`, a Consolas."""
+    f = QFont(MONO if mono else DISPLAY if display else FAMILY)
     f.setPixelSize(round(px))
-    if width > 100 and not mono:
-        weight = max(weight, 700)
-    # A Segoe UI tem 400, 600 e 700: um peso no meio faria o Windows inventar um, e aí borra.
-    f.setWeight(QFont.Weight(400 if weight < 550 else 600 if weight < 650 else 700))
-    if caps:
-        f.setCapitalization(QFont.Capitalization.AllUppercase)
-        f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.7)
+    # Segoe UI e Bahnschrift têm 300, 400, 600 e 700 de verdade: um peso no meio seria inventado e borraria.
+    f.setWeight(QFont.Weight(300 if weight < 350 else 400 if weight < 550 else 600 if weight < 650 else 700))
     return f
 
 
-def window_scheme() -> Scheme:
-    return LIGHT
+def motion() -> bool:
+    """False se o Windows está com as animações desligadas (Acessibilidade > Efeitos visuais)."""
+    if sys.platform != "win32":
+        return True
+    import ctypes
+
+    value = ctypes.c_int(1)
+    if not ctypes.windll.user32.SystemParametersInfoW(0x1042, 0, ctypes.byref(value), 0):  # SPI_GETCLIENTAREAANIMATION
+        return True
+    return bool(value.value)
+
+
+def ms(duration: int) -> int:
+    """Duração de animação, ou 0 se o Windows pede sem animação."""
+    return duration if motion() else 0
+
+
+def sheen(rect: QRectF, alpha: int = 255) -> QLinearGradient:
+    """O brilho furta-cor da pena, da esquerda para a direita de `rect`."""
+    g = QLinearGradient(rect.topLeft(), rect.topRight())
+    for stop, color in zip((0.0, 0.55, 1.0), SHEEN):
+        c = QColor(color)
+        c.setAlpha(alpha)
+        g.setColorAt(stop, c)
+    return g
+
+
+def feather(rect: QRectF, cut: float = CUT, radius: float = RADIUS) -> QPainterPath:
+    """Retângulo com cantos de 4 px e o canto de cima, à direita, cortado em diagonal (a ponta da pena)."""
+    r, c = rect, min(cut, rect.width() / 3, rect.height() / 3)
+    path = QPainterPath()
+    path.moveTo(r.left() + radius, r.top())
+    path.lineTo(r.right() - c, r.top())
+    path.lineTo(r.right(), r.top() + c)
+    path.lineTo(r.right(), r.bottom() - radius)
+    path.quadTo(QPointF(r.right(), r.bottom()), QPointF(r.right() - radius, r.bottom()))
+    path.lineTo(r.left() + radius, r.bottom())
+    path.quadTo(QPointF(r.left(), r.bottom()), QPointF(r.left(), r.bottom() - radius))
+    path.lineTo(r.left(), r.top() + radius)
+    path.quadTo(QPointF(r.left(), r.top()), QPointF(r.left() + radius, r.top()))
+    path.closeSubpath()
+    return path
 
 
 @cache
 def _kbd_style() -> str:
-    return (f"font-family:'{MONO}'; font-size:10px; color:{A300}; background:{G800};"
-            f" padding:0 4px; border-radius:4px;")
+    return (f"font-family:'{DISPLAY}'; font-size:11px; color:{ON_PENA}; background:{PENA_3};"
+            f" padding:0 4px; border-radius:3px;")
 
 
 def tip(label: str, shortcut: str | None = None) -> str:
@@ -141,92 +158,133 @@ def tip(label: str, shortcut: str | None = None) -> str:
     return f"{label}&nbsp;&nbsp;<span style=\"{_kbd_style()}\">&nbsp;{shortcut}&nbsp;</span>"
 
 
-# Botões em pílula: verde só na ação principal (uma por tela).
+def sheen_qss() -> str:
+    stops = ", ".join(f"stop:{s} {c}" for s, c in zip((0, 0.55, 1), SHEEN))
+    return f"qlineargradient(x1:0, y1:0, x2:1, y2:0, {stops})"
+
+
+# Botões. Primário: o brilho da pena (um por tela). Os outros, retos e discretos.
 _BUTTONS = f"""
-QPushButton {{ min-height: 34px; padding: 0 16px; border-radius: {PILL}px; border: 1px solid transparent;
-    font-family: '{FAMILY}'; font-size: 13px; font-weight: 700; }}
-QPushButton[variant="primary"] {{ background: {S500}; color: {INK}; }}
-QPushButton[variant="primary"]:hover {{ background: {S400}; }}
-QPushButton[variant="primary"]:pressed {{ background: {S600}; }}
+QPushButton {{ min-height: 34px; padding: 0 14px; border-radius: {RADIUS}px; border: 1px solid transparent;
+    font-family: '{FAMILY}'; font-size: 13px; font-weight: 600; }}
+QPushButton[variant="primary"] {{ background: {sheen_qss()}; color: {ON_ACCENT}; }}
+QPushButton[variant="primary"]:hover {{ background: {ACCENT_HOVER}; }}
+QPushButton[variant="primary"]:pressed {{ background: {ACCENT_TEXT}; }}
 QPushButton[variant="danger"] {{ background: {DANGER_BG}; color: {DANGER_FG}; border-color: {DANGER_LINE}; }}
 QPushButton[variant="danger"]:hover {{ background: #fbdcd8; }}
-QPushButton[variant="secondary"] {{ background: rgba(255,255,255,0.78); color: {PAPER}; border-color: {G700}; }}
-QPushButton[variant="secondary"]:hover {{ background: #ffffff; border-color: {G600}; }}
-QPushButton[variant="secondary"]:pressed {{ background: {G800}; }}
-QPushButton[variant="ghost"] {{ background: transparent; color: {A300}; }}
-QPushButton[variant="ghost"]:hover {{ background: rgba(30,27,24,0.06); color: {PAPER}; }}
-QPushButton[variant="ghost"]:pressed {{ background: rgba(30,27,24,0.10); }}
-QPushButton[variant="ghost"]:checked {{ background: {SOFT}; color: {S600}; }}
-QPushButton:disabled {{ background: transparent; color: {G500}; border-color: {G700}; }}
-QPushButton:focus {{ border-color: {S500}; }}
+QPushButton[variant="secondary"] {{ background: {SURFACE}; color: {INK}; border-color: {LINE}; }}
+QPushButton[variant="secondary"]:hover {{ border-color: {ACCENT}; color: {ACCENT_TEXT}; }}
+QPushButton[variant="secondary"]:pressed {{ background: {SUNKEN}; }}
+QPushButton[variant="ghost"] {{ background: transparent; color: {INK_2}; }}
+QPushButton[variant="ghost"]:hover {{ background: {SUNKEN}; color: {INK}; }}
+QPushButton[variant="ghost"]:checked {{ background: {ACCENT_SOFT}; color: {ACCENT_TEXT}; }}
+QPushButton:disabled {{ background: transparent; color: {FAINT}; border-color: {LINE}; }}
+QPushButton:focus {{ border-color: {ACCENT}; }}
 """
-# Abas e escolhas (Segmented): trilho cinza-areia, a escolhida vira uma pílula branca.
+# Os mesmos botões sobre a pena (barras laterais e painéis escuros).
+_BUTTONS_ON_PENA = f"""
+QPushButton[variant="secondary"] {{ background: rgba(255,255,255,0.06); color: {ON_PENA};
+    border-color: rgba(255,255,255,0.14); }}
+QPushButton[variant="secondary"]:hover {{ background: rgba(255,255,255,0.11); border-color: {SIGNAL}; color: #ffffff; }}
+QPushButton[variant="secondary"]:pressed {{ background: rgba(255,255,255,0.16); }}
+QPushButton[variant="ghost"] {{ color: {ON_PENA_MUTED}; }}
+QPushButton[variant="ghost"]:hover {{ background: rgba(255,255,255,0.08); color: {ON_PENA}; }}
+QPushButton:focus {{ border-color: {SIGNAL}; }}
+QPushButton:disabled {{ color: #5d6876; border-color: rgba(255,255,255,0.08); }}
+"""
+# Escolha única em segmentos (Segmented): a escolhida ganha o brilho da pena.
 _DIAL = f"""
-QFrame#dial {{ background: rgba(30,27,24,0.06); border: none; border-radius: {PILL}px; }}
-QFrame#dial QToolButton {{ color: {A300}; background: transparent; border: none; border-radius: 14px;
-    padding: 6px 13px; font-family: '{FAMILY}'; font-size: 12.5px; font-weight: 600; }}
-QFrame#dial QToolButton:hover {{ color: {PAPER}; background: rgba(255,255,255,0.55); }}
-QFrame#dial QToolButton:checked {{ background: #ffffff; color: {S600}; font-weight: 700; }}
+QFrame#dial {{ background: {SUNKEN}; border: none; border-radius: {RADIUS}px; }}
+QFrame#dial QToolButton {{ color: {INK_2}; background: transparent; border: none; border-radius: 3px;
+    padding: 5px 12px; font-family: '{DISPLAY}'; font-size: 13px; font-weight: 600; }}
+QFrame#dial QToolButton:hover {{ color: {INK}; background: rgba(255,255,255,0.7); }}
+QFrame#dial QToolButton:checked {{ background: {sheen_qss()}; color: {ON_ACCENT}; }}
+"""
+_DIAL_ON_PENA = f"""
+QFrame#dial {{ background: rgba(255,255,255,0.07); }}
+QFrame#dial QToolButton {{ color: {ON_PENA_MUTED}; }}
+QFrame#dial QToolButton:hover {{ color: {ON_PENA}; background: rgba(255,255,255,0.08); }}
+QFrame#dial QToolButton:checked {{ color: {ON_ACCENT}; }}
+"""
+_SCROLL = f"""
+QScrollBar:vertical {{ background: transparent; width: 9px; margin: 2px; }}
+QScrollBar::handle:vertical {{ background: {LINE_STRONG}; border-radius: 2px; min-height: 30px; }}
+QScrollBar:horizontal {{ background: transparent; height: 9px; margin: 2px; }}
+QScrollBar::handle:horizontal {{ background: {LINE_STRONG}; border-radius: 2px; min-width: 30px; }}
+QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page {{ background: none; height: 0;
+    width: 0; }}
 """
 
 
 def app_stylesheet() -> str:
-    """Estilo global: tooltips, menus (bandeja e botão direito) e diálogos."""
+    """Estilo global: tooltips, menus (bandeja e botão direito) e diálogos, todos na pena."""
     return f"""
-QToolTip {{ background: {G900}; color: {PAPER}; border: 1px solid {G700}; padding: 5px 8px; border-radius: 8px;
+QToolTip {{ background: {PENA}; color: {ON_PENA}; border: 1px solid {PENA_LINE}; padding: 5px 8px; border-radius: 3px;
     font-family: '{FAMILY}'; font-size: 12.5px; }}
-QMenu {{ background: {G900}; color: {PAPER}; border: 1px solid {G700}; border-radius: {WINDOW_RADIUS}px; padding: 6px;
-    font-family: '{FAMILY}'; font-size: 13.5px; font-weight: 400; min-width: 250px; }}
-QMenu::item {{ padding: 8px 18px 8px 10px; border-radius: 9px; }}
-QMenu::item:selected {{ background: {SOFT}; color: {S600}; }}
-QMenu::item:disabled {{ color: {G500}; }}
+QMenu {{ background: {PENA}; color: {ON_PENA}; border: 1px solid {PENA_LINE}; border-radius: {RADIUS}px; padding: 6px;
+    font-family: '{FAMILY}'; font-size: 13.5px; min-width: 250px; }}
+QMenu::item {{ padding: 8px 18px 8px 10px; border-radius: 3px; border-left: 2px solid transparent; }}
+QMenu::item:selected {{ background: {PENA_3}; color: #ffffff; border-left: 2px solid {SIGNAL}; }}
+QMenu::item:disabled {{ color: {ON_PENA_MUTED}; }}
 QMenu::icon {{ padding-left: 8px; }}
-QMenu::separator {{ height: 1px; background: {G700}; margin: 5px 6px; }}
+QMenu::separator {{ height: 1px; background: {PENA_LINE}; margin: 5px 6px; }}
 QMenu::right-arrow {{ width: 8px; }}
-QDialog#klickDialog {{ background: {G900}; }}
-QDialog#klickDialog QLabel {{ color: {A300}; font-family: '{FAMILY}'; font-size: 13.5px; }}
-QDialog#klickDialog QLabel#title {{ color: {PAPER}; }}
-QFrame#dialogFoot {{ background: {G950}; border-top: 1px solid {G700}; }}
-QLabel#hint {{ color: {G400}; font-size: 11px; }}
+QDialog#klickDialog {{ background: {SURFACE}; }}
+QDialog#klickDialog QLabel {{ color: {INK_2}; font-family: '{FAMILY}'; font-size: 13.5px; }}
+QDialog#klickDialog QLabel#title {{ color: {INK}; }}
+QFrame#dialogFoot {{ background: {PAGE}; border-top: 1px solid {LINE}; }}
+QLabel#hint {{ color: {MUTED}; font-size: 11px; }}
 {_BUTTONS}
 """
 
 
-def dark_panel_stylesheet() -> str:
-    """Barras e painéis que ficam por cima da tela (o nome vem de quando eram escuros)."""
+def panel_stylesheet() -> str:
+    """Barras e painéis por cima da tela (captura, editar, gravar, aviso): vidro escuro da pena."""
     return f"""
 QFrame#panel {{ background: transparent; border: none; }}
-QToolButton {{ color: {A300}; background: transparent; border: none; border-radius: 12px; padding: 6px; }}
-QToolButton:hover {{ background: rgba(255,255,255,0.85); color: {PAPER}; }}
-QToolButton:pressed {{ background: {G800}; }}
-QToolButton:checked {{ background: #ffffff; color: {S600}; }}
-QToolButton:focus {{ border: 1px solid {S500}; }}
-QLabel {{ color: {PAPER}; }}
-QFrame#divider {{ background: rgba(30,27,24,0.12); }}
-QLabel[role="muted"] {{ color: {G400}; }}
-QLabel[role="section"] {{ color: {G400}; font-family: '{FAMILY}'; font-size: 10.5px; font-weight: 700;
-    letter-spacing: 0.8px; }}
-{_DIAL}{_BUTTONS}
+QToolButton {{ color: {ON_PENA}; background: transparent; border: 1px solid transparent; border-radius: 3px;
+    padding: 6px; font-family: '{DISPLAY}'; }}
+QToolButton:hover {{ background: rgba(255,255,255,0.09); color: #ffffff; }}
+QToolButton:pressed {{ background: rgba(255,255,255,0.15); }}
+QToolButton:checked {{ background: rgba(255,255,255,0.13); color: #ffffff; border-color: {SIGNAL}; }}
+QToolButton:focus {{ border-color: {SIGNAL}; }}
+QLabel {{ color: {ON_PENA}; }}
+QFrame#divider {{ background: rgba(255,255,255,0.12); }}
+QLabel[role="muted"] {{ color: {ON_PENA_MUTED}; }}
+QLabel[role="section"] {{ color: {ON_PENA_MUTED}; font-family: '{DISPLAY}'; font-size: 13px; font-weight: 600; }}
+{_DIAL}{_DIAL_ON_PENA}{_BUTTONS}{_BUTTONS_ON_PENA}
 """
 
 
-def window_stylesheet(s: Scheme = LIGHT) -> str:
-    """Janelas (galeria, leitura, análise, configurações)."""
+def window_stylesheet() -> str:
+    """Janelas (galeria, leitura, análise, configurações): conteúdo claro; o que tem objectName "pena" é escuro."""
     return f"""
-QWidget#window {{ background: {s.bg}; color: {s.fg}; }}
-QWidget#window QLabel {{ color: {s.fg}; }}
-QWidget#window QLabel[role="muted"] {{ color: {s.muted}; }}
-QWidget#window QLabel[role="data"] {{ color: {DATA}; }}
-QWidget#window QLabel[role="section"] {{ color: {s.muted}; }}
-QLineEdit {{ background: {s.field}; color: {s.fg}; border: 1px solid {s.line}; border-radius: {RADIUS}px;
-    padding: 7px 12px; font-family: '{FAMILY}'; font-size: 13.5px; selection-background-color: {SOFT};
-    selection-color: {S600}; }}
-QLineEdit:focus {{ border: 1px solid {S500}; }}
+QWidget#window {{ background: {PAGE}; color: {INK}; }}
+QWidget#window QLabel {{ color: {INK}; }}
+QWidget#window QLabel[role="muted"] {{ color: {MUTED}; }}
+QWidget#window QLabel[role="section"] {{ color: {MUTED}; font-family: '{DISPLAY}'; font-size: 13px; font-weight: 600; }}
+QWidget#pena {{ background: {PENA}; }}
+QWidget#pena QLabel {{ color: {ON_PENA}; }}
+QWidget#pena QLabel[role="muted"], QWidget#pena QLabel[role="section"] {{ color: {ON_PENA_MUTED}; }}
+QLineEdit {{ background: {FIELD}; color: {INK}; border: 1px solid {LINE}; border-radius: {RADIUS}px;
+    padding: 7px 12px; font-family: '{FAMILY}'; font-size: 13.5px; selection-background-color: {ACCENT_SOFT};
+    selection-color: {ACCENT_TEXT}; }}
+QLineEdit:focus {{ border: 1px solid {ACCENT}; }}
+QPlainTextEdit, QTextEdit {{ background: {FIELD}; color: {INK}; border: 1px solid {LINE}; border-radius: {RADIUS}px;
+    padding: 8px; selection-background-color: {ACCENT_SOFT}; selection-color: {ACCENT_TEXT}; }}
+QPlainTextEdit:focus, QTextEdit:focus {{ border-color: {ACCENT}; }}
 QListView, QScrollArea {{ background: transparent; border: none; }}
-QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
-QScrollBar::handle:vertical {{ background: {G600}; border-radius: 4px; min-height: 30px; }}
-QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 2px; }}
-QScrollBar::handle:horizontal {{ background: {G600}; border-radius: 4px; min-width: 30px; }}
-QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page {{ background: none; height: 0; width: 0; }}
-{_DIAL}{_BUTTONS}
+QComboBox {{ background: {FIELD}; color: {INK}; border: 1px solid {LINE}; border-radius: {RADIUS}px; padding: 6px 12px;
+    min-width: 120px; }}
+QComboBox QAbstractItemView {{ background: {FIELD}; color: {INK}; selection-background-color: {ACCENT_SOFT};
+    selection-color: {ACCENT_TEXT}; }}
+{_SCROLL}{_DIAL}{_BUTTONS}
+QWidget#pena QFrame#dial {{ background: rgba(255,255,255,0.07); }}
+QWidget#pena QFrame#dial QToolButton {{ color: {ON_PENA_MUTED}; }}
+QWidget#pena QFrame#dial QToolButton:checked {{ color: {ON_ACCENT}; }}
 """
+
+
+def pena_buttons() -> str:
+    """Folha para um widget de fundo escuro dentro de uma janela clara (os botões ficam claros sobre a pena)."""
+    return _BUTTONS + _BUTTONS_ON_PENA

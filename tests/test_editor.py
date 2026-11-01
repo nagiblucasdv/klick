@@ -82,7 +82,7 @@ def test_text_is_typed_inline(qapp):
     QTest.mouseClick(editor.canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(20, 20))
     QTest.keyClicks(editor, "Tabela 012")
     QTest.keyClick(editor, Qt.Key.Key_Return)
-    assert [s.text for s in editor.shapes] == ["Tabela 012"]
+    assert [s.text for s in editor.marker.shapes] == ["Tabela 012"]
     editor.close()
 
 
@@ -105,16 +105,17 @@ def test_editor_draws_with_mouse_and_undo(qapp):
     canvas = editor.canvas
     editor.set_tool(Tool.HIGHLIGHT)
     drag(canvas, QPoint(10, 10), QPoint(80, 60))
-    assert len(editor.shapes) == 1
+    assert len(editor.marker.shapes) == 1
     editor.set_tool(Tool.STEP)
     QTest.mouseClick(canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(150, 150))
     QTest.mouseClick(canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(200, 150))
-    assert [s.value for s in editor.shapes if isinstance(s, Step)] == [1, 2]
+    assert [s.value for s in editor.marker.shapes if isinstance(s, Step)] == [1, 2]
     editor.marker.undo()
-    assert editor.marker.next_number == 2
-    editor.marker.undo()
-    editor.marker.undo()
-    assert editor.shapes == []
+    QTest.mouseClick(canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(220, 150))
+    assert [s.value for s in editor.marker.shapes if isinstance(s, Step)] == [1, 2]  # desfez o 2: volta a ser 2
+    for _ in range(3):
+        editor.marker.undo()
+    assert editor.marker.shapes == []
     editor.close()
 
 
@@ -134,7 +135,7 @@ def test_tiny_drag_does_not_create_shape(qapp):
     editor.show()
     editor.set_tool(Tool.ARROW)
     drag(editor.canvas, QPoint(10, 10), QPoint(11, 11))
-    assert editor.shapes == []
+    assert editor.marker.shapes == []
     editor.close()
 
 
@@ -145,7 +146,7 @@ def test_hidpi_canvas_maps_to_image_pixels(qapp):
     assert editor.canvas.width() == 200
     editor.set_tool(Tool.SPOT)
     drag(editor.canvas, QPoint(10, 10), QPoint(50, 50))
-    assert editor.shapes[0].rect.normalized() == QRectF(20, 20, 80, 80)
+    assert editor.marker.shapes[0].rect.normalized() == QRectF(20, 20, 80, 80)
     editor.close()
 
 
@@ -161,6 +162,8 @@ def test_copy_emits_rendered_image(qapp):
     assert action is Action.COPY
     assert image.pixelColor(150, 150) == QColor("white")
     assert image.pixelColor(10, 10).lightness() < 160
+    assert editor.isVisible()  # quem fecha é quem recebe, depois de entregar
+    editor.close()
 
 
 def test_bar_shows_every_tool_and_swatches_pick_color(qapp):
@@ -174,7 +177,7 @@ def test_bar_shows_every_tool_and_swatches_pick_color(qapp):
     editor.bar.size.buttons["thick"].click()
     editor.set_tool(Tool.ARROW)
     drag(editor.canvas, QPoint(10, 10), QPoint(90, 60))
-    assert editor.shapes[0].style.width > style().width
+    assert editor.marker.shapes[0].style.width > style().width
     editor.close()
 
 

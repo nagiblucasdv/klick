@@ -104,7 +104,7 @@ class Style:
 
 def _ink(color: QColor) -> QColor:
     """Cor de texto que lê sobre `color`."""
-    return QColor(theme.PAPER) if color.lightness() > 150 else QColor("#ffffff")
+    return QColor(theme.INK) if color.lightness() > 150 else QColor("#ffffff")
 
 
 def _shadow(style: Style) -> QPen:
@@ -279,21 +279,21 @@ class Note:
     def paint(self, p: QPainter, base: QImage) -> None:
         s = self.style.unit
         box = self.box()
-        p.setPen(QPen(QColor(theme.G600), 1 * s))
-        p.setBrush(QColor(theme.G850))
+        p.setPen(QPen(QColor(theme.LINE_STRONG), 1 * s))
+        p.setBrush(QColor(theme.FIELD))
         p.drawRoundedRect(box, 6 * s, 6 * s)
         p.fillRect(QRectF(box.left() + 1 * s, box.top() + 4 * s, 4 * s, box.height() - 8 * s), self.style.color)
         p.setFont(theme.font(14 * s, 600))
         text_box = box.adjusted(12 * s, 0, -8 * s, 0)
         if self.text:
-            p.setPen(QColor(theme.PAPER))
+            p.setPen(QColor(theme.INK))
             p.drawText(text_box, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self.text)
         elif self.editing:
-            p.setPen(QColor(theme.G500))
+            p.setPen(QColor(theme.FAINT))
             p.drawText(text_box, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "Digite")
         if self.editing:
             x = text_box.left() + QFontMetricsF(theme.font(14 * s, 600)).horizontalAdvance(self.text) + 1 * s
-            p.setPen(QPen(QColor(theme.S500), 1.5 * s))
+            p.setPen(QPen(QColor(theme.ACCENT), 1.5 * s))
             p.drawLine(QPointF(x, box.top() + 5 * s), QPointF(x, box.bottom() - 5 * s))
 
     def valid(self) -> bool:
@@ -396,7 +396,7 @@ class Measure:
 
     def paint(self, p: QPainter, base: QImage) -> None:
         s = self.style.scale
-        ink = QColor(theme.S500)
+        ink = QColor(theme.ACCENT)
         dx, dy = self.end.x() - self.start.x(), self.end.y() - self.start.y()
         length = math.hypot(dx, dy)
         if length < 1:
@@ -416,7 +416,7 @@ class Measure:
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(ink)
         p.drawRoundedRect(box, box.height() / 2, box.height() / 2)
-        p.setPen(QColor(theme.INK))
+        p.setPen(QColor(theme.ON_ACCENT))
         p.drawText(box, Qt.AlignmentFlag.AlignCenter, label)
 
     def valid(self) -> bool:
@@ -477,10 +477,6 @@ class Marker(QObject):
         self.draft = None
         self.editing: Note | None = None
         self._next_number = 1
-
-    @property
-    def next_number(self) -> int:
-        return self._next_number
 
     def set_tool(self, tool: Tool) -> None:
         self.commit_text()
@@ -648,12 +644,12 @@ class Swatch(QAbstractButton):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         c = QPointF(self.width() / 2, self.height() / 2)
         if self.isChecked():
-            p.setPen(QPen(QColor(theme.PAPER), 2))
+            p.setPen(QPen(QColor("#ffffff"), 2))
             p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawEllipse(c, 10.5, 10.5)
-        p.setPen(QPen(QColor(0, 0, 0, 40), 1))
+            p.drawRoundedRect(QRectF(c.x() - 10.5, c.y() - 10.5, 21, 21), 3, 3)
+        p.setPen(QPen(QColor(255, 255, 255, 60), 1))
         p.setBrush(self.color)
-        p.drawEllipse(c, 7.5, 7.5)
+        p.drawRoundedRect(QRectF(c.x() - 7.5, c.y() - 7.5, 15, 15), 2, 2)
 
 
 class EditBar(QFrame):
@@ -669,7 +665,7 @@ class EditBar(QFrame):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("panel")
-        self.setStyleSheet(theme.dark_panel_stylesheet())
+        self.setStyleSheet(theme.panel_stylesheet())
         self.setCursor(Qt.CursorShape.ArrowCursor)
         col = QVBoxLayout(self)
         col.setContentsMargins(8, 8, 8, 8)
@@ -687,7 +683,7 @@ class EditBar(QFrame):
                 row.addSpacing(4)
                 continue
             tool, icon_name, label, key = entry
-            b = icon_button(icon_name, label, key, size=34)
+            b = icon_button(icon_name, label, key, size=34, on_pena=True)
             b.setCheckable(True)
             b.setAutoRaise(False)
             b.clicked.connect(lambda _=False, t=tool: self.toolChosen.emit(t))
@@ -711,9 +707,9 @@ class EditBar(QFrame):
         self.size.changed.connect(lambda key: self.sizeChosen.emit(next(v for k, _, v in SIZES if k == key)))
         row.addWidget(self.size)
         row.addStretch(1)
-        self.undo = icon_button("undo", "Desfazer", "Ctrl Z")
+        self.undo = icon_button("undo", "Desfazer", "Ctrl Z", on_pena=True)
         self.undo.clicked.connect(self.undoRequested.emit)
-        self.save = icon_button("save", "Salvar", "Ctrl S")
+        self.save = icon_button("save", "Salvar", "Ctrl S", on_pena=True)
         self.save.clicked.connect(self.saveRequested.emit)
         self.done = button("Copiar", "primary", "check")
         self.done.setToolTip(theme.tip("Copiar a imagem editada", "Enter"))
@@ -725,7 +721,7 @@ class EditBar(QFrame):
 
         self.description = QLabel()
         self.description.setProperty("role", "muted")
-        self.description.setFont(theme.font(12, 500))
+        self.description.setFont(theme.font(12.5))
         self.description.setContentsMargins(4, 0, 0, 0)
         col.addWidget(self.description)
 
@@ -813,10 +809,10 @@ class EditorWindow(QWidget):
         self.setWindowTitle("Klick: editar imagem")
         self.setWindowIcon(app_icon())
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        self.setStyleSheet(f"QWidget#editor {{ background: {theme.G950}; }}"
-                           f" QScrollArea {{ border: none; background: {theme.G950}; }}"
-                           f" QFrame#panel {{ background: {theme.G900}; border: 1px solid {theme.G700};"
-                           f" border-radius: {theme.WINDOW_RADIUS}px; }}")
+        self.setStyleSheet(f"QWidget#editor {{ background: {theme.PENA}; }}"
+                           f" QScrollArea {{ border: none; background: {theme.PENA}; }}"
+                           f" QFrame#panel {{ background: {theme.PENA_2}; border: 1px solid {theme.PENA_LINE};"
+                           f" border-radius: {theme.RADIUS}px; }}")
 
         screen = QGuiApplication.primaryScreen().availableGeometry()
         view = min(1 / image_scale, screen.width() * 0.85 / image.width(), screen.height() * 0.75 / image.height())
@@ -844,11 +840,6 @@ class EditorWindow(QWidget):
         bar = self.bar.sizeHint()
         self.resize(max(self.canvas.width(), bar.width()) + 28, self.canvas.height() + bar.height() + 40)
 
-    # compatível com quem usava editor.canvas.shapes
-    @property
-    def shapes(self) -> list:
-        return self.marker.shapes
-
     def set_tool(self, tool: Tool) -> None:
         self.marker.set_tool(tool)
         self.bar.set_tool(tool)
@@ -868,5 +859,5 @@ class EditorWindow(QWidget):
             super().keyPressEvent(event)
 
     def _finish(self, action: Action) -> None:
+        # Quem recebe fecha a janela depois de entregar; salvar cancelado deixa a edição aberta.
         self.done.emit(action, self.marker.result())
-        self.close()

@@ -66,7 +66,7 @@ PATHS = {
 
 
 @cache
-def pixmap(name: str, color: str = theme.A300, size: int = 18, ratio: float | None = None) -> QPixmap:
+def pixmap(name: str, color: str = theme.INK_2, size: int = 18, ratio: float | None = None) -> QPixmap:
     if ratio is None:
         screen = QGuiApplication.primaryScreen()
         ratio = screen.devicePixelRatio() if screen else 1.0
@@ -82,13 +82,13 @@ def pixmap(name: str, color: str = theme.A300, size: int = 18, ratio: float | No
     return pm
 
 
-def icon(name: str, color: str = theme.A300, hover: str | None = None, checked: str | None = None,
+def icon(name: str, color: str = theme.INK_2, hover: str | None = None, checked: str | None = None,
          size: int = 18) -> QIcon:
     """Ícone com cor normal, ao passar o mouse (Active) e marcado (On)."""
     ico = QIcon()
     ico.addPixmap(pixmap(name, color, size), QIcon.Mode.Normal, QIcon.State.Off)
     ico.addPixmap(pixmap(name, hover or color, size), QIcon.Mode.Active, QIcon.State.Off)
-    ico.addPixmap(pixmap(name, theme.G500, size), QIcon.Mode.Disabled, QIcon.State.Off)
+    ico.addPixmap(pixmap(name, theme.FAINT, size), QIcon.Mode.Disabled, QIcon.State.Off)
     if checked:
         ico.addPixmap(pixmap(name, checked, size), QIcon.Mode.Normal, QIcon.State.On)
         ico.addPixmap(pixmap(name, checked, size), QIcon.Mode.Active, QIcon.State.On)

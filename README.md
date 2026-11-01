@@ -30,6 +30,7 @@ notebook):
 - `PrtSc`: print
 - `F7`: gravar vídeo ou GIF / parar a gravação
 - `Ctrl+Shift+T`: **ler texto direto** (selecionou, soltou, o texto já está no clipboard)
+- `Ctrl+Shift+Espaço`: estrutura de tabelas (só com ela ligada; veja abaixo)
 
 **Depois de copiar** aparece um aviso no canto da tela com a miniatura e atalhos para editar, ler, pesquisar e guardar.
 
@@ -44,7 +45,7 @@ e gravações e GIFs vão para a pasta. O que está só na galeria some depois d
 na pasta (`Ctrl+S` na galeria, ou "Guardar" no aviso) tira do prazo: o print vira PNG em `Prints/`, a leitura vira `.txt`
 em `Leitura/` e a gravação sai da pasta interna da galeria para `Gravações/` ou `GIFs/`.
 
-**Galeria:** menu lateral de vidro com Capturar, Gravar, as coleções (Tudo, Prints, Gravações, GIFs, Leituras e
+**Galeria:** barra lateral escura com Capturar, Gravar, as coleções (Tudo, Prints, Gravações, GIFs, Leituras e
 Análises), o filtro "Só na galeria", a pasta e as configurações. Cada cartão traz o selo "some em N dias" ou "na pasta".
 A busca procura no texto que aparecia no print ("erro 500", "atencao" acha "Atenção"). `Enter` copia de novo (gravações
 e GIFs vão como arquivo); em Leituras e Análises, abre o texto. `Ctrl+S` guarda na pasta e `Del` exclui de vez. O
@@ -53,27 +54,46 @@ histórico fica em `%LOCALAPPDATA%\Klick\history` (as últimas 1000 capturas).
 **Leitura:** além de copiar, `Pesquisar` busca o trecho no Google, `Google Lens` pesquisa a imagem e `Salvar .txt`
 grava o texto em `Leitura/`. Quando o texto é SQL, JSON ou uma grade, aparece "Abrir na Análise".
 
-**Análise:** janela própria para o que foi lido de um print, com o painel da direita explicando o que achou. Abre com
-`Ctrl+Q` na seleção, pela bandeja, pela galeria ou pela leitura, já na aba certa. Lê com os dois motores (o RapidOCR
-ampliado e com as cores invertidas em fundo escuro, como num editor) e fica com a leitura mais limpa.
+**Análise:** abre com `Ctrl+Q` na seleção, pela bandeja, pela galeria ou pela leitura. O Klick decide o que é (SQL,
+JSON, tabela ou texto comum) e mostra só essa visão; "Ler como", em cima, troca se ele errar. Lê com os dois motores
+(o RapidOCR ampliado e com as cores invertidas em fundo escuro, como num editor) e fica com a leitura mais limpa; o
+texto é remontado pela posição das palavras, então a indentação do print fica. Cada correção do OCR aparece com uma
+ondinha no texto, pisca uma vez ao chegar e fica na lista "Corrigido do OCR", de onde dá para desfazer. A conclusão diz
+em uma frase o que aquilo é; a galeria guarda o texto final, com as suas correções.
 
-- **Consulta SQL:** consertada (`FR0M`, aspas curvas, `c. codcli`), formatada e colorida; ao lado o tipo, as tabelas,
-  as junções, os filtros do `WHERE`, o agrupamento e a ordem.
-- **JSON:** consertado (aspas curvas ou simples, vírgula sobrando, `True`/`None`, chave sem aspas), validado com a linha
-  e a coluna do erro, formatado ou compactado; ao lado as chaves, os itens, a profundidade e os campos.
-- **Tabela:** a grade editável (`Del` apaga linhas), com nome da tabela, "1ª linha é cabeçalho" e "vírgula decimal".
-  Copia como Excel, CSV (`;`), `INSERT` ou `UPDATE` (escolhendo a coluna do `WHERE`). Ao lado, o resumo de cada coluna:
-  tipo, preenchidos, diferentes e, nos números, soma, média, mínimo e máximo ("Copiar resumo").
+- **SQL:** conserta `FR0M`, `SELEC7`, aspas curvas e `c. codcli` sem mexer em texto entre aspas, comentário nem na crase
+  do MySQL. Formata (ou mostra como estava), lista as partes (tabelas com apelido, colunas, junções, filtros,
+  agrupamento, ordem, limite) e confere: parêntese ou aspa aberta, `= NULL`, JOIN sem ON, vírgula antes do FROM,
+  LEFT JOIN anulado pelo WHERE, INSERT com número errado de valores e, em vermelho, UPDATE ou DELETE sem WHERE. Com
+  WHERE, "SELECT de conferência" copia as linhas que vão mudar e "Backup antes" copia um `CREATE TABLE …_bkp_<data> AS
+  SELECT` delas.
+- **JSON:** conserta só fora dos textos (aspas curvas ou simples, vírgula sobrando, `True`/`None`, chave sem aspas),
+  formata ou compacta e, se estiver inválido, marca a linha do erro e diz o que falta. A árvore ao lado abre e fecha;
+  clicar copia o caminho (`itens[0].cod`), duplo clique copia o valor. "Ver como tabela" transforma a lista de objetos
+  numa grade.
+- **Tabela:** as colunas saem do alinhamento de todas as linhas, então célula vazia não desloca a linha; o cabeçalho é
+  detectado sozinho. Em cima, linhas, colunas e as somas (sem somar código). Célula de coluna de números lida com
+  letra (`1O`) fica marcada com a sugestão (`10`) e "Trocar pelas sugestões" corrige. Copia como Excel, CSV (`;`),
+  Markdown (para chat e chamado), `INSERT`, `UPDATE` (escolhendo a coluna do `WHERE`) ou JSON.
+
+**Estrutura de tabelas** (ligue em Configurações › Leitura e Análise): cada consulta que você copia ou salva na
+Análise ensina as tabelas e as colunas que ela cita (`c.nome` com `FROM clientes c` diz que clientes tem nome).
+`Ctrl+Shift+Espaço`, em qualquer programa, abre a lista perto do mouse: digite parte do nome da tabela, escolha
+SELECT, INSERT ou UPDATE (`Tab` troca) e `Enter` copia o comando com as colunas. Fica em
+`%LOCALAPPDATA%\Klick\estrutura.json`.
 
 **Configurações** (engrenagem na galeria ou na bandeja): atalhos, onde salvar e por quanto tempo, pasta do Klick, lupa,
 linhas de terço, aviso depois de copiar, perguntar antes de gravar e os padrões de formato/som/qualidade, leitura
-precisa, Análise, guardar histórico e abrir com o Windows. As mudanças valem na hora.
+precisa, Análise, estrutura de tabelas, guardar histórico e abrir com o Windows. As mudanças valem na hora.
 
-**Visual:** a identidade é a "Névoa": vidro claro sobre uma bruma verde-petróleo e areia, verde-petróleo só nas ações, vermelho só para gravar e
-âmbar para o que é temporário. A fonte é a do Windows (Segoe UI), nítida em qualquer tamanho, com a hierarquia feita pelo peso, números em Consolas, cantos
-arredondados e botões em pílula. Por cima da tela, os painéis mostram a tela congelada desfocada por trás. O ícone é o
-selo com a cabeça do corvo, com o olho na forma da mira de captura. Cores e estilos ficam em
-[klick/theme.py](klick/theme.py).
+**Visual:** a identidade é a "Plumagem", que vem do corvo do ícone. A moldura (barras laterais, painéis sobre a tela,
+avisos, menus e a barra de título) é negro-azulada como a pena; o conteúdo é claro. O brilho furta-cor da pena
+(verde-água, índigo, violeta) aparece só no que está ativo: a seleção, o foco, a ação principal. Cantos retos de 4 px,
+e os painéis têm um corte em diagonal no canto de cima, como a ponta de uma pena. Bahnschrift nos títulos e números,
+Segoe UI no texto e Consolas no código, todas do Windows. Movimento só onde mostra o que mudou: os cantos da seleção
+encaixam ao soltar o mouse, o marcador da galeria desliza até a coleção, o aviso entra deslizando, a leitura varre o
+print e as correções do OCR piscam ao chegar; com as animações do Windows desligadas, nada se mexe. Cores e estilos
+ficam em [klick/theme.py](klick/theme.py).
 
 ## Preferências
 
@@ -113,11 +133,12 @@ o ffmpeg de verdade, com uma fonte de vídeo sintética no lugar da tela, e são
 | `klick/editor.py` | Editar imagem (`Marker` e `EditBar`), usado na captura e na janela de editar |
 | `klick/reader.py` | Leitura estilo Lens: palavras com posição, seleção por arraste |
 | `klick/lens.py` | Pesquisa no Google Lens (página local que envia a imagem) e no Google |
-| `klick/sql.py` | SQL, JSON e tabelas: detecta, conserta, formata, colore, resume e converte |
-| `klick/sql_ui.py` | Janela de Análise (abas Consulta SQL, JSON e Tabela) |
+| `klick/analysis/` | Motor da Análise: consertos do OCR, SQL, JSON, tabelas, o tipo e a estrutura aprendida |
+| `klick/analysis_ui.py` | Janela da Análise |
+| `klick/structure_ui.py` | Autocompletar de estrutura (SELECT, INSERT e UPDATE prontos) |
 | `klick/audio.py` | Som do computador na gravação (loopback do WASAPI) |
 | `klick/settings_ui.py` | Configurações, com a gravação de atalhos |
-| `klick/theme.py`, `icons.py`, `icon.py`, `widgets.py` | Identidade Névoa: cores, fontes, ícones, o corvo, botões, aviso |
+| `klick/theme.py`, `icons.py`, `icon.py`, `widgets.py` | Identidade Plumagem: cores, fontes, formas, ícones, o corvo, botões, aviso |
 | `klick/recorder.py` | Gravação com ffmpeg (gdigrab/x11grab) e conversão para GIF |
 | `klick/recording_ui.py` | Painel de gravar (vídeo ou GIF) e a moldura e os controles, excluídos do vídeo |
 | `klick/history.py`, `history_ui.py` | Histórico em SQLite com busca FTS5, temporários e a galeria com menu lateral |

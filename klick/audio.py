@@ -1,8 +1,8 @@
-"""Som da gravação: o que toca no computador (loopback do WASAPI) e/ou o microfone.
+"""Som do computador na gravação (loopback do WASAPI).
 
-O ffmpeg do Windows não grava o som do sistema sem "Mixagem estéreo", então o áudio
-é gravado à parte em WAV, numa thread por fonte, e juntado ao vídeo quando a
-gravação para (ver Recorder).
+O ffmpeg do Windows não grava o som do sistema sem "Mixagem estéreo", então ele é gravado
+à parte em WAV, numa thread, e juntado ao vídeo quando a gravação para (ver Recorder).
+O microfone não passa por aqui: entra direto no ffmpeg (dshow).
 """
 
 from __future__ import annotations
@@ -31,53 +31,44 @@ def available() -> bool:
     return True
 
 
-def _device(source: str):
-    import soundcard as sc
-
-    if source == "system":
-        return sc.get_microphone(id=str(sc.default_speaker().name), include_loopback=True), 2
-    return sc.default_microphone(), 1
-
-
 class AudioCapture:
-    """Grava cada fonte num WAV temporário até `stop()`."""
+    """Grava o som do computador num WAV temporário até `stop()`."""
 
-    def __init__(self, audio: str):
-        self.sources = SOURCES.get(audio, ())
-        self.files: list[Path] = []
+    def __init__(self):
         self.errors: list[str] = []
         self._stop = threading.Event()
-        self._threads: list[threading.Thread] = []
+        self._thread: threading.Thread | None = None
+        fd, name = tempfile.mkstemp(prefix="klick_system_", suffix=".wav")
+        os.close(fd)
+        self._path = Path(name)
 
     def start(self) -> None:
-        for source in self.sources:
-            fd, name = tempfile.mkstemp(prefix=f"klick_{source}_", suffix=".wav")
-            os.close(fd)
-            path = Path(name)
-            thread = threading.Thread(target=self._run, args=(source, path), daemon=True)
-            self._threads.append(thread)
-            thread.start()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
 
     def stop(self) -> list[Path]:
-        """Para e devolve os WAVs que gravaram alguma coisa."""
+        """Para e devolve o WAV, se gravou alguma coisa (senão apaga o arquivo vazio)."""
         self._stop.set()
-        for thread in self._threads:
-            thread.join(timeout=3)
-        return [f for f in self.files if f.exists() and f.stat().st_size > 44]
+        if self._thread is not None:
+            self._thread.join(timeout=3)
+        if self._path.exists() and self._path.stat().st_size > 44:  # 44 bytes = só o cabeçalho
+            return [self._path]
+        self._path.unlink(missing_ok=True)
+        return []
 
-    def _run(self, source: str, path: Path) -> None:
+    def _run(self) -> None:
         try:
             import numpy as np
+            import soundcard as sc
 
-            device, channels = _device(source)
-            with wave.open(str(path), "wb") as out, device.recorder(samplerate=RATE, channels=channels) as rec:
-                out.setnchannels(channels)
+            device = sc.get_microphone(id=str(sc.default_speaker().name), include_loopback=True)
+            with wave.open(str(self._path), "wb") as out, device.recorder(samplerate=RATE, channels=2) as rec:
+                out.setnchannels(2)
                 out.setsampwidth(2)
                 out.setframerate(RATE)
-                self.files.append(path)
                 while not self._stop.is_set():
                     data = rec.record(numframes=CHUNK)
                     out.writeframes((np.clip(data, -1, 1) * 32767).astype("<i2").tobytes())
-        except Exception as exc:  # noqa: BLE001 - a gravação segue sem esta fonte
-            log.warning("Áudio (%s) falhou", source, exc_info=exc)
-            self.errors.append("microfone" if source == "mic" else "som do sistema")
+        except Exception as exc:  # noqa: BLE001 - a gravação segue sem o som do computador
+            log.warning("Som do computador falhou", exc_info=exc)
+            self.errors.append("som do computador")

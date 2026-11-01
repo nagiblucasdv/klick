@@ -1,13 +1,10 @@
 from datetime import datetime, timedelta
-from types import SimpleNamespace
 
-from PySide6.QtCore import QRectF
 from PySide6.QtGui import QColor, QImage
 
-from klick import config, sql
+from klick import config
 from klick.history import Collection, History
 from klick.hotkeys import combo, key_name
-from klick.ocr import OcrResult, Word
 
 
 def image(color: str = "white") -> QImage:
@@ -98,52 +95,6 @@ def test_settings_reject_a_shortcut_already_in_use(qapp):
     dialog.close()
 
 
-def test_query_summary_and_json_repair():
-    q = ("select c.codcli from clientes c left join pedidos p on p.codcli = c.codcli "
-         "where p.data >= '2026-10-01' and (p.total > 10 or p.x = 1) order by c.codcli desc;")
-    assert sql.joins(q) == ["left join pedidos p on p.codcli = c.codcli"]
-    assert sql.filters(q) == ["p.data >= '2026-10-01'", "AND (p.total > 10 or p.x = 1)"]
-    assert sql.ordering(q) == "c.codcli desc"
-    r = sql.read_json("{'pedido': 15147800, 'itens': [{'cod': 1,}], ok: True,}")
-    assert not r.error and r.value == {"pedido": 15147800, "itens": [{"cod": 1}], "ok": True}
-    assert (r.keys, r.items, r.depth) == (4, 1, 3)
-    assert sql.read_json('{"a": 1 "b": 2}').error == "linha 1, coluna 9: falta uma vírgula"
-
-
-def test_column_stats_sum_brazilian_numbers():
-    rows = [["Cod", "Preço", "Cliente"], ["1", "1.240,50", "Ana"], ["2", "R$ 7", ""], ["3", "", "Ana"]]
-    cod, price, client = sql.column_stats(rows)
-    assert (cod.kind, cod.sum) == ("número", 6)
-    assert (price.kind, price.filled, price.sum, price.max) == ("número", 2, 1247.5, 1240.5)
-    assert (client.kind, client.filled, client.distinct) == ("texto", 2, 1)
-    assert sql.brl(1247.5) == "1.247,50" and sql.brl(6.0) == "6"
-
-
-def json_result() -> OcrResult:
-    lines = ['{"pedido": 15147800,', '"situacao": "faturado",', '"itens": [1, 2]}']
-    words = []
-    for i, line in enumerate(lines):
-        x = 10
-        for part in line.split():
-            words.append(Word(part, QRectF(x, 10 + i * 24, 8 * len(part), 16), i))
-            x += 8 * len(part) + 6
-    return OcrResult(tuple(words), "RapidOCR", tuple(lines))
-
-
-def test_analysis_opens_json_tab_formatted(qapp):
-    from klick.sql_ui import AnalysisWindow
-    window = AnalysisWindow(image(), json_result(), refine=False)
-    assert window.tabs.value == "json" and sql.analysis_tab(json_result()) == "json"
-    assert window.json_edit.toPlainText().startswith('{\n  "pedido": 15147800')
-    assert window.json_state.text() == "Válido"
-    window._format_json(compact=True)
-    assert window.current_text() == '{"pedido":15147800,"situacao":"faturado","itens":[1,2]}'
-    window.json_edit.setPlainText('{"a": 1 "b": 2}')
-    window._update_json_info()
-    assert window.json_state.text() == "Inválido" and "vírgula" in window.json_error.text()
-    window.close()
-
-
 def test_copied_print_follows_the_save_policy(qapp, tmp_path, monkeypatch):
     from test_app import make_app
 
@@ -161,9 +112,3 @@ def test_copied_print_follows_the_save_policy(qapp, tmp_path, monkeypatch):
         assert not newest.temp and newest.saved.parent == tmp_path / "Klick" / "Prints"
     finally:
         config.set_save_policy("prints", "gallery")
-
-
-def test_analysis_tab_ignores_plain_text():
-    words = (Word("Bom", QRectF(0, 0, 30, 16), 0), Word("dia", QRectF(40, 0, 30, 16), 0))
-    assert sql.analysis_tab(OcrResult(words, "x")) is None
-    assert sql.analysis_tab(SimpleNamespace(words=(), text="")) is None

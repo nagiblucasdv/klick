@@ -18,11 +18,11 @@ from PySide6.QtGui import (QColor, QGuiApplication, QImage, QKeySequence, QPaint
                            QTextCursor)
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPlainTextEdit, QSizePolicy, QVBoxLayout, QWidget
 
-from klick import config, lens, ocr, sql, theme
+from klick import analysis, config, lens, ocr, theme
 from klick.actions import copy_text, store_text
 from klick.icon import app_icon
 from klick.ocr import OcrResult
-from klick.widgets import button
+from klick.widgets import Pena, button
 
 log = logging.getLogger(__name__)
 
@@ -183,19 +183,18 @@ class WordView(QWidget):
         p.drawImage(QRectF(self.rect()), self.image)
 
         if self.result is None and not self.message:
-            # Lendo: uma faixa verde varre o print, como o visor de uma câmera.
+            # Lendo: uma linha com o brilho da pena varre o print, como o visor de uma câmera.
             y = self.height() * self._scan
-            band = QColor(theme.S500)
-            band.setAlpha(40)
-            p.fillRect(QRectF(0, y - 18, self.width(), 18), band)
-            p.setPen(QPen(QColor(theme.S500), 2))
-            p.drawLine(QPointF(0, y), QPointF(self.width(), y))
+            band = QColor(theme.SIGNAL)
+            band.setAlpha(36)
+            p.fillRect(QRectF(0, y - 22, self.width(), 22), band)
+            p.fillRect(QRectF(0, y - 1, self.width(), 2), theme.sheen(QRectF(self.rect())))
             return
 
         if self.result and self.result.words:
             p.fillPath(self._dim_path(), DIM)
             rng = self.selected_range()
-            fill = QColor(theme.S500)
+            fill = QColor(theme.ACCENT)
             fill.setAlpha(80)
             for i in range(len(self.result.words)):
                 box = self._box(i)
@@ -203,7 +202,7 @@ class WordView(QWidget):
                     p.setPen(Qt.PenStyle.NoPen)
                     p.setBrush(fill)
                     p.drawRoundedRect(box, 3, 3)
-                    p.fillRect(QRectF(box.left() + 2, box.bottom() - 2.5, box.width() - 4, 2.5), QColor(theme.S500))
+                    p.fillRect(QRectF(box.left() + 2, box.bottom() - 2.5, box.width() - 4, 2.5), QColor(theme.ACCENT))
                 elif i == self.hover:
                     p.setPen(QPen(QColor(255, 255, 255, 190), 1.5))
                     p.setBrush(Qt.BrushStyle.NoBrush)
@@ -212,12 +211,12 @@ class WordView(QWidget):
         if self.message:
             p.setFont(theme.font(13, 600))
             metrics = p.fontMetrics()
-            box = QRectF(0, 0, metrics.horizontalAdvance(self.message) + 28, 32)
+            box = QRectF(0, 0, metrics.horizontalAdvance(self.message) + 28, 34)
             box.moveCenter(QPointF(self.width() / 2, self.height() / 2))
-            p.setPen(QPen(QColor(theme.G700), 1))
-            p.setBrush(QColor(theme.G900))
-            p.drawRoundedRect(box, box.height() / 2, box.height() / 2)
-            p.setPen(QColor(theme.PAPER))
+            p.setPen(QPen(theme.GLASS_LINE, 1))
+            p.setBrush(theme.GLASS)
+            p.drawRoundedRect(box, 3, 3)
+            p.setPen(QColor(theme.ON_PENA))
             p.drawText(box, Qt.AlignmentFlag.AlignCenter, self.message)
 
 
@@ -225,7 +224,7 @@ class ReaderWindow(QWidget):
     """Janela da leitura. Roda o OCR sozinha (rápido e depois o preciso) e avisa quando terminou."""
 
     recognized = Signal(object)  # OcrResult final
-    analysisRequested = Signal(object, str)  # OcrResult, aba da Análise ("query", "json" ou "table")
+    analysisRequested = Signal(object, str)  # OcrResult, tipo para a Análise ("sql", "json" ou "table")
     _done = Signal(object, str, bool)  # resultado, erro, preciso? (vem das threads do OCR)
 
     def __init__(self, image: QImage, result: OcrResult | None = None):
@@ -234,13 +233,9 @@ class ReaderWindow(QWidget):
         self.setWindowTitle("Klick: leitura")
         self.setWindowIcon(app_icon())
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        scheme = theme.window_scheme()
-        self.setStyleSheet(theme.window_stylesheet(scheme) + f"""
-            QPlainTextEdit {{ background: {scheme.field}; color: {scheme.fg}; border: 1px solid {scheme.line};
-                border-radius: {theme.RADIUS}px; padding: 10px; selection-background-color: {theme.SOFT};
-                selection-color: {theme.S600}; }}
-            QPlainTextEdit:focus {{ border-color: {theme.S500}; }}""")
+        self.setStyleSheet(theme.window_stylesheet())
         self._precise_done = False
+        self._reported = False  # recognized já saiu (vai para a galeria uma vez só)
         self._edited = False
         self._syncing = False
         self._offsets: list[tuple[int, int]] = []
@@ -259,20 +254,19 @@ class ReaderWindow(QWidget):
         logo = QLabel()
         logo.setPixmap(app_icon().pixmap(26, 26))
         title = QLabel("Leitura")
-        title.setFont(theme.font(20, 800))
+        title.setFont(theme.font(24, 600, display=True))
         self.status = QLabel("Lendo…")
         self.status.setProperty("role", "muted")
-        self.status.setFont(theme.font(12, 500, mono=True))
+        self.status.setFont(theme.font(13, display=True))
         head.addWidget(logo)
         head.addWidget(title)
         head.addWidget(self.status)
         head.addStretch(1)
-        hint = QLabel("Arraste sobre as palavras · duplo clique pega a linha")
+        hint = QLabel("Arraste sobre as palavras; duplo clique pega a linha")
         hint.setProperty("role", "muted")
         head.addWidget(hint)
 
-        frame = QWidget()
-        frame.setStyleSheet(f"background: {theme.G800}; border-radius: {theme.WINDOW_RADIUS}px;")
+        frame = Pena()
         inner = QVBoxLayout(frame)
         inner.setContentsMargins(0, 0, 0, 0)
         inner.addWidget(self.view, 0, Qt.AlignmentFlag.AlignCenter)
@@ -280,12 +274,13 @@ class ReaderWindow(QWidget):
         side = QVBoxLayout()
         side.setSpacing(6)
         side_title = QLabel("Texto reconhecido")
-        side_title.setFont(theme.font(14, 700))
+        side_title.setFont(theme.font(16, 600, display=True))
         self.analysis = button("Abrir na Análise", "secondary", "analysis")
         self.analysis.setToolTip("Consulta SQL, JSON ou tabela: abre na Análise para formatar e converter")
-        self.analysis.clicked.connect(lambda: self.analysisRequested.emit(self.view.result, self._analysis_tab))
+        self.analysis.clicked.connect(
+            lambda: self.analysisRequested.emit(self.view.result, self._analysis_kind.value if self._analysis_kind else ""))
         self.analysis.hide()
-        self._analysis_tab = "query"
+        self._analysis_kind: analysis.Kind | None = None
         title_row = QHBoxLayout()
         title_row.addWidget(side_title)
         title_row.addStretch(1)
@@ -294,7 +289,7 @@ class ReaderWindow(QWidget):
         side_hint.setProperty("role", "muted")
         side_hint.setFont(theme.font(12))
         self.text = QPlainTextEdit()
-        self.text.setFont(theme.font(13.5, 450))
+        self.text.setFont(theme.font(13.5))
         self.text.setPlaceholderText("O texto aparece aqui assim que a leitura terminar")
         self.text.setFixedWidth(PANEL_WIDTH)
         self.text.textChanged.connect(self._on_text_edited)
@@ -381,13 +376,16 @@ class ReaderWindow(QWidget):
                 self.view.set_error(error or "Não foi possível ler o texto")
             elif self.view.result is not None:
                 self._update_status()
+                self._finish_reading()  # o preciso falhou: fica (e vai para a galeria) a do Windows
             return
         if precise and self._edited:
             self.status.setText("Leitura precisa pronta, mas você já corrigiu o texto")
+            self._finish_reading()
             return
         if precise and self.view.result is not None and not result.words and self.view.result.words:
             self._update_status()
-            return  # o preciso não achou nada onde o rápido achou: fica o rápido
+            self._finish_reading()  # o preciso não achou nada onde o rápido achou: fica o rápido
+            return
 
         self.view.set_result(result)
         self._fill_text(result)
@@ -395,10 +393,17 @@ class ReaderWindow(QWidget):
         self.copy_all.setEnabled(bool(result.words))
         self.search.setEnabled(bool(result.words))
         self.save_txt.setEnabled(bool(result.words))
-        self._analysis_tab = sql.analysis_tab(result)
-        self.analysis.setVisible(config.option("addon_sql") and self._analysis_tab is not None)
+        kind = analysis.detect(result)
+        self._analysis_kind = kind if kind not in (None, analysis.Kind.TEXT) else None
+        self.analysis.setVisible(config.option("addon_sql") and self._analysis_kind is not None)
         if self._precise_done:
-            self.recognized.emit(result)
+            self._finish_reading()
+
+    def _finish_reading(self) -> None:
+        """Leitura terminada: avisa uma vez só, com o resultado que ficou na tela."""
+        if not self._reported and self.view.result is not None:
+            self._reported = True
+            self.recognized.emit(self.view.result)
 
     def _update_status(self) -> None:
         count = len(self.view.result.words) if self.view.result else 0

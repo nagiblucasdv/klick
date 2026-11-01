@@ -4,18 +4,21 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from concurrent.futures import Future
 from pathlib import Path
 
 import shiboken6
-from PySide6.QtCore import QObject, QTimer, QUrl, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QCursor, QDesktopServices, QGuiApplication, QImage
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QMenu, QSystemTrayIcon, QVBoxLayout, QWidget, \
     QWidgetAction
 
 from klick import __author__, __version__, config, icons, lens, ocr, theme
 from klick.actions import Action, copy_file, copy_image, copy_text, save_image, store_image, store_text
+from klick.analysis.schema import Schema
+from klick.analysis_ui import AnalysisWindow
 from klick.capture import Selection, grab_screens
 from klick.editor import EditorWindow
 from klick.history import History
@@ -28,7 +31,7 @@ from klick.reader import ReaderWindow
 from klick.recording_ui import SOUND_OPTIONS, RecordingIndicator
 from klick.settings_ui import SettingsDialog
 from klick.single import InstanceServer, send_to_running
-from klick.sql_ui import AnalysisWindow
+from klick.structure_ui import StructurePicker
 from klick.widgets import Toast
 
 log = logging.getLogger("klick")
@@ -52,6 +55,8 @@ class KlickApp(QObject):
         self._recording: tuple[QImage, RecordFormat, bool] | None = None  # miniatura, formato, temporário
         self._history = history if history is not None else History()
         self._history_window: HistoryWindow | None = None
+        self._schema = Schema(config.schema_path())  # tabelas aprendidas na Análise (autocompletar)
+        self._picker: StructurePicker | None = None
 
         self._recorder = Recorder(self)
         self._recorder.converting.connect(lambda text: self._indicator and self._indicator.set_status(text))
@@ -68,7 +73,7 @@ class KlickApp(QObject):
         self._tray.setContextMenu(self._menu)
         self._tray.activated.connect(self._on_tray_activated)
 
-        self._hotkeys = HotkeyListener(config.hotkeys())
+        self._hotkeys = HotkeyListener(config.active_hotkeys())
         self._hotkeys.triggered.connect(self._on_hotkey)
         self._ocrDone.connect(self._on_ocr_done)
 
@@ -78,7 +83,7 @@ class KlickApp(QObject):
         if QSystemTrayIcon.isSystemTrayAvailable():
             self._tray.show()
         if self._hotkeys.start():
-            log.info("Atalhos globais: %s", config.hotkeys())
+            log.info("Atalhos globais: %s", config.active_hotkeys())
         self.expire()
         self._expire_timer.start()
 
@@ -126,6 +131,8 @@ class KlickApp(QObject):
         dialog.hotkeysChanged.connect(self._reload_hotkeys)
         dialog.savingChanged.connect(self.expire)
         dialog.exec()
+        # Fechar a janela no meio da gravação de um atalho deixaria os atalhos pausados.
+        self._hotkeys.restart(config.active_hotkeys())
         self._build_menu()
 
     def _pause_hotkeys(self, paused: bool) -> None:
@@ -133,10 +140,10 @@ class KlickApp(QObject):
         if paused:
             self._hotkeys.stop()
         else:
-            self._hotkeys.restart(config.hotkeys())
+            self._hotkeys.restart(config.active_hotkeys())
 
     def _reload_hotkeys(self) -> None:
-        self._hotkeys.restart(config.hotkeys())
+        self._hotkeys.restart(config.active_hotkeys())
         self._build_menu()
 
     def _build_menu(self) -> None:
@@ -151,6 +158,8 @@ class KlickApp(QObject):
             self._record_action.setText("Parar gravação")
         self._menu_item(menu, "read", "Ler texto", keys["ocr"], lambda: self.start_capture(Action.OCR))
         self._menu_item(menu, "analysis", "Análise: SQL, JSON ou tabela", None, lambda: self.start_capture(Action.SQL))
+        if config.option("structure"):
+            self._menu_item(menu, "table", "Estrutura de tabelas", keys["structure"], lambda: self.show_structure())
         menu.addSeparator()
         self._menu_item(menu, "image", "Galeria", None, lambda: self.show_history())
         self._menu_item(menu, "gear", "Configurações", None, lambda: self.show_settings())
@@ -159,7 +168,7 @@ class KlickApp(QObject):
 
     @staticmethod
     def _menu_item(menu: QMenu, icon_name: str, text: str, shortcut: str | None, slot,
-                   color: str = theme.A300) -> QAction:
+                   color: str = theme.INK_2) -> QAction:
         # O atalho vai no texto (depois do \t) só para ser mostrado; quem dispara é o HotkeyListener.
         action = QAction(icons.icon(icon_name, color, size=16), f"{text}\t{shortcut}" if shortcut else text, menu)
         if slot is not None:
@@ -177,12 +186,12 @@ class KlickApp(QObject):
         logo.setPixmap(app_icon().pixmap(28, 28))
         words = QVBoxLayout()
         words.setSpacing(0)
-        name = QLabel(f"Klick <span style='color:{theme.G400}; font-weight:400;'>{__version__}</span>")
-        name.setFont(theme.font(14, 800))
-        name.setStyleSheet(f"color: {theme.PAPER};")
+        name = QLabel(f"Klick <span style='color:{theme.ON_PENA_MUTED}; font-weight:400;'>{__version__}</span>")
+        name.setFont(theme.font(16, 600, display=True))
+        name.setStyleSheet(f"color: {theme.ON_PENA};")
         sign = QLabel(f"por {__author__}")
-        sign.setFont(theme.font(11, 500))
-        sign.setStyleSheet(f"color: {theme.G400};")
+        sign.setFont(theme.font(12))
+        sign.setStyleSheet(f"color: {theme.ON_PENA_MUTED};")
         words.addWidget(name)
         words.addWidget(sign)
         row.addWidget(logo)
@@ -259,8 +268,9 @@ class KlickApp(QObject):
         finally:
             self._end_session()
 
-    def _deliver(self, action: Action, image: QImage, source: str | None = None) -> None:
-        """Copia ou salva a imagem final (direto da seleção ou vinda do editor)."""
+    def _deliver(self, action: Action, image: QImage, source: str | None = None) -> bool:
+        """Copia ou salva a imagem final (direto da seleção ou vinda do editor). False se não foi
+        entregue (salvar cancelado ou com erro)."""
         saved = None
         try:
             if action is Action.COPY:
@@ -270,19 +280,25 @@ class KlickApp(QObject):
             elif action is Action.SAVE:
                 saved = save_image(image)
                 if not saved:
-                    return
+                    return False
                 toast = Toast("Salvo", saved.name, image, [("folder", "Mostrar na pasta", "folder")])
                 toast.actionTriggered.connect(lambda key: self._reveal(saved))
                 self._show_toast(toast)
         except OSError as exc:
             self._warn(f"{exc}\nEscolha outra pasta e tente de novo.")
-            return
+            return False
         entry_id = self._history.add(image, source or action.value, temp=saved is None, saved=saved)
         if action is Action.COPY and config.option("toasts"):
             days = config.temp_days()
-            where = f"Prints/{saved.name}" if saved else (f"na galeria por {days} dias" if days else "na galeria")
+            if saved:
+                where = f"Prints/{saved.name}"
+            elif entry_id is None:
+                where = "só no clipboard (histórico desligado)"
+            else:
+                where = f"na galeria por {days} dias" if days else "na galeria"
             self._show_toast(self._capture_toast("Copiado", f"{image.width()} × {image.height()} · {where}",
                                                  image, entry_id))
+        return True
 
     # --- editor ------------------------------------------------------------
 
@@ -291,7 +307,8 @@ class KlickApp(QObject):
 
     def _open_editor_image(self, image: QImage, scale: float = 1.0) -> None:
         editor = EditorWindow(image, scale)
-        editor.done.connect(lambda action, image: self._deliver(action, image, source="edit"))
+        # Só fecha depois de entregar: salvar cancelado deixa a edição aberta, sem perder nada.
+        editor.done.connect(lambda action, image: self._deliver(action, image, source="edit") and editor.close())
         editor.destroyed.connect(lambda: self._on_editor_closed(editor))
         self._editors.append(editor)
         editor.show()
@@ -305,15 +322,15 @@ class KlickApp(QObject):
 
     # --- leitura e análise -------------------------------------------------
 
-    def _record_text(self, image: QImage, source: str, text: str) -> None:
-        """Guarda o que foi lido na galeria (e na pasta Leitura, se for o caso)."""
+    def _record_text(self, image: QImage, source: str, text: str) -> int | None:
+        """Guarda o que foi lido na galeria (e na pasta Leitura, se for o caso). Devolve o item da galeria."""
         saved = None
         if config.save_policy("reading") == "folder" and text.strip():
             try:
                 saved = store_text(text)
             except OSError:
                 log.warning("Não foi possível salvar a leitura", exc_info=True)
-        self._history.add(image, source, text=text, temp=saved is None, saved=saved)
+        return self._history.add(image, source, text=text, temp=saved is None, saved=saved)
 
     def _open_reader(self, image: QImage, record: bool = True) -> ReaderWindow:
         """Abre a leitura estilo Lens. Da captura, o resultado vai para a coleção Leituras."""
@@ -321,7 +338,8 @@ class KlickApp(QObject):
         if record:
             reader.recognized.connect(
                 lambda result: result.words and self._record_text(image, Action.OCR.value, result.text))
-        reader.analysisRequested.connect(lambda result, tab: self._open_sql(image, record=False, result=result, tab=tab))
+        reader.analysisRequested.connect(lambda result, kind: self._open_sql(image, record=False, result=result,
+                                                                             kind=kind or None))
         reader.destroyed.connect(lambda: self._on_reader_closed(reader))
         self._readers.append(reader)
         reader.show()
@@ -329,11 +347,24 @@ class KlickApp(QObject):
         reader.activateWindow()
         return reader
 
-    def _open_sql(self, image: QImage, record: bool = True, result=None, tab: str | None = None) -> AnalysisWindow:
-        """Análise (SQL, JSON e tabelas). Da captura, o que foi lido vai para a coleção Análises."""
-        window = AnalysisWindow(image, result, tab)
+    def _open_sql(self, image: QImage, record: bool = True, result=None, kind: str | None = None) -> AnalysisWindow:
+        """Análise (SQL, JSON e tabelas). Da captura, o que foi lido vai para a coleção Análises; ao fechar, a
+        galeria fica com o texto final (com as suas correções)."""
+        window = AnalysisWindow(image, result, kind, schema=self._schema)
         if record:
-            window.recognized.connect(lambda r: r.words and self._record_text(image, "sql", r.text))
+            entry: dict[str, int | None] = {"id": None}
+
+            def recorded(text: str) -> None:
+                if text.strip():
+                    entry["id"] = self._record_text(image, "sql", text)
+
+            def closed(text: str) -> None:
+                if entry["id"] is not None and text.strip():
+                    self._history.set_text(entry["id"], text)
+
+            window.recognized.connect(recorded)
+            window.finished.connect(closed)
+        window.readRequested.connect(lambda: self._open_reader(image, record=False))
         window.destroyed.connect(lambda: self._on_reader_closed(window))
         self._readers.append(window)
         window.show()
@@ -387,7 +418,8 @@ class KlickApp(QObject):
         indicator.stopRequested.connect(self._recorder.stop)
         self._indicator = indicator
         kind = "gifs" if fmt is RecordFormat.GIF else "recordings"
-        temp = config.save_policy(kind) == "gallery"
+        # Sem histórico não há galeria para guardar: o arquivo vai direto para a pasta.
+        temp = config.save_policy(kind) == "gallery" and self._history.enabled
         # O print da área no instante da seleção vira a miniatura na galeria.
         self._recording = (selection.image, fmt, temp)
 
@@ -409,17 +441,17 @@ class KlickApp(QObject):
     def _on_record_finished(self, path: str) -> None:
         self._close_indicator()
         copy_file(Path(path))
-        kind, temp = "video", False
+        kind = "gif" if Path(path).suffix == ".gif" else "video"  # se o GIF falhar, chega o MP4
+        temp = False
         if self._recording is not None:
-            frame, fmt, temp = self._recording
-            kind = "gif" if fmt is RecordFormat.GIF else "video"
+            frame, _, temp = self._recording
             self._history.add_media(Path(path), kind, frame, self._recorder.last_duration, temp=temp)
             self._recording = None
         subtitle = f"{Path(path).name} · é só colar"
         if temp:
             subtitle += f"\nFica na galeria por {config.temp_days()} dias" if config.temp_days() else ""
         if self._recorder.warning:
-            subtitle += f"\n{self._recorder.warning}: o vídeo ficou sem esse som"
+            subtitle += f"\n{self._recorder.warning}"
         toast = Toast("GIF copiado" if kind == "gif" else "Gravação copiada", subtitle, None,
                       [("folder", "Mostrar na pasta", "folder")], kind="warn" if self._recorder.warning else "ok")
         toast.actionTriggered.connect(lambda key: self._reveal(Path(path)))
@@ -461,7 +493,11 @@ class KlickApp(QObject):
         elif key == "lens":
             lens.search_image(image)
         elif key == "keep" and entry_id is not None:
-            path = self._history.keep(entry_id)
+            try:
+                path = self._history.keep(entry_id)
+            except OSError as exc:
+                self._warn(f"Não deu para guardar na pasta\n{exc}")
+                return
             if path:
                 self._show_toast(Toast("Guardado na pasta", path.name, image, kind="ok"))
         elif key == "save":
@@ -483,6 +519,19 @@ class KlickApp(QObject):
             self.start_capture(Action.OCR)
         elif name == "record":
             self.toggle_recording()
+        elif name == "structure":
+            self.show_structure()
+
+    def show_structure(self) -> None:
+        """Abre o autocompletar de estrutura perto do mouse (uma janela só)."""
+        if self._picker is not None and shiboken6.isValid(self._picker):
+            self._picker.close()
+        picker = StructurePicker(self._schema)
+        picker.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        picker.copied.connect(lambda table, kind: self._show_toast(
+            Toast(f"{kind} de {table} copiado", "Cole onde quiser (Ctrl+V).", kind="ok")))
+        self._picker = picker
+        picker.show_near()
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
@@ -510,6 +559,10 @@ def main(argv: list[str] | None = None) -> int:
         return selftest()
 
     command = next((name for name in ("capture", "ocr", "record", "history") if getattr(args, name)), "")
+    if sys.platform == "win32":
+        # Sem isso o Windows não deixa uma janela aberta por atalho global (o autocompletar, a captura) vir para a
+        # frente com o foco: ela piscaria na barra de tarefas e o que você digitasse iria para o outro programa.
+        os.environ.setdefault("QT_QPA_PLATFORM", "windows:alwaysactivatewindow")
     if args.oneshot:
         command = command or "capture"
 
@@ -552,7 +605,7 @@ def selftest() -> int:
     app = QApplication(sys.argv[:1])
     if "Segoe UI" not in QFontInfo(theme.font(13)).family():
         return 2
-    if icons.pixmap("copy", theme.S500, 18, 1.0).isNull() or app_icon().isNull():
+    if icons.pixmap("copy", theme.ACCENT, 18, 1.0).isNull() or app_icon().isNull():
         return 3
     image = QImage(560, 90, QImage.Format.Format_RGB32)
     image.fill(QColor("#ffffff"))

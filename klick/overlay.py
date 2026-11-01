@@ -5,13 +5,13 @@ A seleção fica restrita a um monitor por vez.
 
 Dois modos: o print (PrtSc), que só faz imagem (copiar, salvar, editar, ler, pesquisar,
 analisar), e o de gravar (F7), que abre direto o painel de vídeo ou GIF.
-Os painéis por cima da tela são de vidro: o overlay pinta por baixo deles a tela
-congelada desfocada.
+Os painéis por cima da tela são de vidro escuro (a pena): o overlay pinta por baixo deles a tela
+congelada desfocada. Os cantos da seleção têm o brilho furta-cor e encaixam quando você solta o mouse.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEasingCurve, QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, QVariantAnimation, Signal
 from PySide6.QtGui import (QColor, QCursor, QGuiApplication, QImage, QKeySequence, QPainter, QPainterPath, QPen)
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QToolButton, QWidget
 
@@ -51,10 +51,10 @@ TOOLBAR = [
     (None, "close", "Fechar", "Cancelar", "Esc"),
 ]
 
-TOOLBAR_STYLE = theme.dark_panel_stylesheet() + f"""
-QToolButton {{ padding: 6px 4px 4px; min-width: 56px; border-radius: 13px; }}
-QToolButton[primary="true"] {{ background: {theme.S500}; color: {theme.INK}; }}
-QToolButton[primary="true"]:hover {{ background: {theme.S400}; }}
+TOOLBAR_STYLE = theme.panel_stylesheet() + f"""
+QToolButton {{ padding: 6px 4px 4px; min-width: 58px; border-radius: 3px; font-size: 12px; font-weight: 600; }}
+QToolButton[primary="true"] {{ background: {theme.sheen_qss()}; color: {theme.ON_ACCENT}; }}
+QToolButton[primary="true"]:hover {{ background: {theme.ACCENT_HOVER}; }}
 """
 
 
@@ -70,7 +70,7 @@ class Toolbar(QFrame):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(2)
-        label_font = theme.font(11, 700)
+        label_font = theme.font(12, 600, display=True)
         self.buttons: dict[Action | None, QToolButton] = {}
         for entry in TOOLBAR:
             if entry is None:
@@ -80,10 +80,10 @@ class Toolbar(QFrame):
                 continue
             action, icon_name, label, tip, key = entry
             primary = action is Action.COPY
-            color = theme.INK if primary else theme.A300
+            color = theme.ON_ACCENT if primary else theme.ON_PENA
             button = QToolButton()
             button.setText(label)
-            button.setIcon(icons.icon(icon_name, color, hover=color if primary else theme.S600))
+            button.setIcon(icons.icon(icon_name, color, hover="#ffffff"))
             button.setIconSize(QSize(18, 18))
             button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
             button.setFont(label_font)
@@ -126,6 +126,11 @@ class SelectionOverlay(QWidget):
         self._setup: RecordSetup | None = None  # vídeo ou GIF, som e qualidade antes de gravar
         self._loupe = config.option("loupe")
         self._guides = config.option("guides")
+        # Encaixe dos cantos ao soltar o mouse: 0 = longe e apagados, 1 = no lugar.
+        self._snap = 1.0
+        self._snapper = QVariantAnimation(self, startValue=0.0, endValue=1.0, duration=theme.ms(300),
+                                          easingCurve=QEasingCurve.Type.OutBack)
+        self._snapper.valueChanged.connect(self._on_snap)
 
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setMouseTracking(True)
@@ -371,8 +376,13 @@ class SelectionOverlay(QWidget):
             self.update()
             return
         self._previous = QRectF()
-        if self._direct_action is not None:
+        if self._direct_action is not None and self._direct_action is not Action.RECORD:
             self._finish(self._direct_action)
+            return
+        if drag == "create":
+            self._snap_corners()
+        if self._direct_action is Action.RECORD:
+            self._finish(Action.RECORD)
             return
         self._place_toolbar()
         self.update()
@@ -431,6 +441,16 @@ class SelectionOverlay(QWidget):
                 self._start_recording(config.record_format(), config.record_quality(), config.record_audio())
             return
         self.selected.emit(action, self.current())
+
+    def _snap_corners(self) -> None:
+        if self._snapper.duration():
+            self._snap = 0.0
+            self._snapper.stop()
+            self._snapper.start()
+
+    def _on_snap(self, value) -> None:
+        self._snap = float(value)
+        self.update()
 
     def _to_crop(self, pos: QPointF) -> QPointF:
         """Ponto lógico do overlay -> pixel do recorte que está sendo editado."""
@@ -496,23 +516,24 @@ class SelectionOverlay(QWidget):
         self._picked = color
         self.update()
 
-    def _draw_glass(self, p: QPainter, rect: QRectF, radius: float = theme.WINDOW_RADIUS) -> None:
-        """Vidro: a tela desfocada por baixo, um véu claro por cima, borda branca e sombra."""
+    def _draw_glass(self, p: QPainter, rect: QRectF, cut: float = theme.CUT) -> None:
+        """Vidro da pena: a tela desfocada por baixo, um véu escuro por cima, borda fina e o corte no canto."""
         if self._frost is None:
             self._frost = blur(self._image, FROST)
         p.save()
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        shadow = QPainterPath()
-        shadow.addRoundedRect(rect.adjusted(-1, 2, 1, 6), radius + 2, radius + 2)
-        p.fillPath(shadow, QColor(30, 27, 24, 40))
-        path = QPainterPath()
-        path.addRoundedRect(rect, radius, radius)
+        p.fillPath(theme.feather(rect.adjusted(-1, 2, 1, 6), cut), QColor(0, 0, 0, 60))
+        path = theme.feather(rect, cut) if cut else QPainterPath()
+        if not cut:
+            path.addRoundedRect(rect, theme.RADIUS, theme.RADIUS)
         p.setClipPath(path)
         sx = self._image.width() / max(1, self.width())
         sy = self._image.height() / max(1, self.height())
         source = QRectF(rect.x() * sx, rect.y() * sy, rect.width() * sx, rect.height() * sy)
         p.drawImage(rect, self._frost, source)
-        p.fillPath(path, theme.GLASS)
+        veil = QColor(theme.GLASS)
+        veil.setAlpha(214)
+        p.fillPath(path, veil)
         p.setClipping(False)
         p.setPen(QPen(theme.GLASS_LINE, 1))
         p.setBrush(Qt.BrushStyle.NoBrush)
@@ -521,7 +542,7 @@ class SelectionOverlay(QWidget):
 
     def _draw_selection(self, p: QPainter) -> None:
         sel = self._selection
-        pen = QPen(QColor(255, 255, 255, 235), 1)
+        pen = QPen(QColor(255, 255, 255, 150), 1)
         pen.setCosmetic(True)
         p.setPen(pen)
         p.drawRect(sel)
@@ -539,46 +560,48 @@ class SelectionOverlay(QWidget):
 
         p.save()
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        corner = QPen(QColor(theme.S500), 3.5)
-        corner.setCapStyle(Qt.PenCapStyle.RoundCap)
-        corner.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        corner = QPen(theme.sheen(sel.adjusted(-2, 0, 2, 0)), 3)
+        corner.setCapStyle(Qt.PenCapStyle.SquareCap)
+        corner.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
         p.setPen(corner)
+        p.setOpacity(max(0.0, min(1.0, self._snap)))
+        away = (1.0 - self._snap) * 16  # no encaixe, os cantos chegam de fora
         arm = min(CORNER, sel.width() / 2, sel.height() / 2)
-        for x, dx in ((sel.left() - 1, arm), (sel.right() + 1, -arm)):
-            for y, dy in ((sel.top() - 1, arm), (sel.bottom() + 1, -arm)):
-                p.drawPolyline([QPointF(x + dx, y), QPointF(x, y), QPointF(x, y + dy)])
+        for x, dx, ox in ((sel.left() - 2, arm, -away), (sel.right() + 2, -arm, away)):
+            for y, dy, oy in ((sel.top() - 2, arm, -away), (sel.bottom() + 2, -arm, away)):
+                p.drawPolyline([QPointF(x + ox + dx, y + oy), QPointF(x + ox, y + oy), QPointF(x + ox, y + oy + dy)])
         p.restore()
 
         phys = to_physical(sel, self.size(), self._image.size())
         self._badge(p, f"{phys.width()} × {phys.height()}", sel.topLeft())
 
     def _badge(self, p: QPainter, text: str, anchor: QPointF) -> None:
-        p.setFont(theme.font(12, 500, mono=True))
+        p.setFont(theme.font(14, 600, display=True))
         metrics = p.fontMetrics()
-        box = QRectF(0, 0, metrics.horizontalAdvance(text) + 18, metrics.height() + 8)
+        box = QRectF(0, 0, metrics.horizontalAdvance(text) + 20, metrics.height() + 8)
         y = anchor.y() - box.height() - 8
-        box.moveTo(anchor.x() - 1, y if y >= 0 else anchor.y() + 8)
-        self._draw_glass(p, box, box.height() / 2)
-        p.setPen(QColor(theme.PAPER))
+        box.moveTo(anchor.x() - 2, y if y >= 0 else anchor.y() + 8)
+        self._draw_glass(p, box, 0)
+        p.setPen(QColor(theme.ON_PENA))
         p.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
 
     def _draw_hint(self, p: QPainter, text: str) -> None:
-        p.setFont(theme.font(13.5, 600))
+        p.setFont(theme.font(15, 600, display=True))
         metrics = p.fontMetrics()
-        key_font = theme.font(11, 500, mono=True)
+        key_font = theme.font(12, 600, display=True)
         key = "Esc"
-        key_w = 34
-        box = QRectF(0, 0, metrics.horizontalAdvance(text) + key_w + 44, 40)
+        key_w = 36
+        box = QRectF(0, 0, metrics.horizontalAdvance(text) + key_w + 46, 42)
         box.moveCenter(QPointF(self.width() / 2, 48))
-        self._draw_glass(p, box, box.height() / 2)
-        p.setPen(QColor(theme.PAPER))
+        self._draw_glass(p, box, 10)
+        p.setPen(QColor(theme.ON_PENA))
         p.drawText(box.adjusted(20, 0, 0, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
-        kbox = QRectF(box.right() - key_w - 14, box.center().y() - 10, key_w, 20)
-        p.setPen(QPen(QColor(30, 27, 24, 30), 1))
-        p.setBrush(QColor(30, 27, 24, 15))
-        p.drawRoundedRect(kbox, 6, 6)
+        kbox = QRectF(box.right() - key_w - 16, box.center().y() - 10, key_w, 20)
+        p.setPen(QPen(QColor(255, 255, 255, 40), 1))
+        p.setBrush(QColor(255, 255, 255, 18))
+        p.drawRoundedRect(kbox, 3, 3)
         p.setFont(key_font)
-        p.setPen(QColor(theme.A300))
+        p.setPen(QColor(theme.ON_PENA))
         p.drawText(kbox, Qt.AlignmentFlag.AlignCenter, key)
 
     def _draw_loupe(self, p: QPainter, pos: QPointF) -> None:
@@ -595,12 +618,12 @@ class SelectionOverlay(QWidget):
             y = pos.y() - 22 - size - info_h
         lens = QRectF(x, y, size, size)
 
-        self._draw_glass(p, lens.adjusted(-5, -5, 5, 5 + info_h), 12)
+        self._draw_glass(p, lens.adjusted(-5, -5, 5, 5 + info_h), 10)
         p.save()
         clip = QPainterPath()
-        clip.addRoundedRect(lens, 8, 8)
+        clip.addRoundedRect(lens, 3, 3)
         p.setClipPath(clip)
-        p.fillRect(lens, QColor(theme.G850))
+        p.fillRect(lens, QColor(theme.FIELD))
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
         visible = source.intersected(self._image.rect())
         if not visible.isEmpty():
@@ -613,12 +636,12 @@ class SelectionOverlay(QWidget):
         for i in range(1, LOUPE_PX):
             p.drawLine(QPointF(lens.left() + i * LOUPE_ZOOM, lens.top()), QPointF(lens.left() + i * LOUPE_ZOOM, lens.bottom()))
             p.drawLine(QPointF(lens.left(), lens.top() + i * LOUPE_ZOOM), QPointF(lens.right(), lens.top() + i * LOUPE_ZOOM))
-        cross = QColor(theme.S500)
-        cross.setAlpha(80)
+        cross = QColor(theme.SIGNAL)
+        cross.setAlpha(70)
         mid = half * LOUPE_ZOOM
         p.fillRect(QRectF(lens.left() + mid, lens.top(), LOUPE_ZOOM, size), cross)
         p.fillRect(QRectF(lens.left(), lens.top() + mid, size, LOUPE_ZOOM), cross)
-        p.setPen(QPen(QColor(theme.S500), 1.5))
+        p.setPen(QPen(QColor(theme.SIGNAL), 1.5))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawRect(QRectF(lens.left() + mid, lens.top() + mid, LOUPE_ZOOM, LOUPE_ZOOM))
         p.restore()
@@ -627,14 +650,14 @@ class SelectionOverlay(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         color = self._image.pixelColor(center) if self._image.rect().contains(center) else QColor("black")
         info = QRectF(lens.left(), lens.bottom() + 4, size, info_h - 4)
-        p.setFont(theme.font(11, 500, mono=True))
-        p.setPen(QColor(theme.PAPER))
+        p.setFont(theme.font(12, 600, display=True))
+        p.setPen(QColor(theme.ON_PENA))
         label = f"Copiado {self._picked}" if self._picked else f"x {center.x()}  y {center.y()}"
         p.drawText(info.adjusted(2, 0, -20, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, label)
         chip = QRectF(info.right() - 16, info.center().y() - 7, 14, 14)
-        p.setPen(QPen(QColor(0, 0, 0, 50), 1))
+        p.setPen(QPen(QColor(255, 255, 255, 90), 1))
         p.setBrush(color)
-        p.drawEllipse(chip)
+        p.drawRoundedRect(chip, 2, 2)
         p.restore()
 
 

@@ -13,12 +13,15 @@ DEFAULT_HOTKEYS = {
     "capture": "<print_screen>",
     "record": "<f7>",  # escolhe a área e grava vídeo ou GIF; apertar de novo para
     "ocr": "<ctrl>+<shift>+t",  # OCR direto: seleciona e o texto já vai para o clipboard
+    "structure": "<ctrl>+<shift>+<space>",  # tabelas aprendidas (só com o autocompletar de estrutura ligado)
 }
-HOTKEY_NAMES = {"capture": "Print", "record": "Gravar vídeo ou GIF", "ocr": "Ler texto direto"}
+HOTKEY_NAMES = {"capture": "Print", "record": "Gravar vídeo ou GIF", "ocr": "Ler texto direto",
+                "structure": "Estrutura de tabelas"}
 KEY_LABELS = {"print_screen": "PrtSc", "ctrl": "Ctrl", "ctrl_l": "Ctrl", "ctrl_r": "Ctrl", "shift": "Shift",
               "shift_l": "Shift", "shift_r": "Shift", "alt": "Alt", "alt_l": "Alt", "alt_r": "Alt Gr",
               "alt_gr": "Alt Gr", "cmd": "Win", "cmd_l": "Win", "cmd_r": "Win", "page_up": "PgUp",
-              "page_down": "PgDn", "insert": "Ins", "delete": "Del", "pause": "Pause", "scroll_lock": "ScrLk"}
+              "page_down": "PgDn", "insert": "Ins", "delete": "Del", "pause": "Pause", "scroll_lock": "ScrLk",
+              "space": "Espaço", "enter": "Enter", "tab": "Tab", "esc": "Esc"}
 
 
 def _settings() -> QSettings:
@@ -48,6 +51,7 @@ OPTIONS = {
     "precise_ocr": True,  # RapidOCR refina a leitura do Windows
     "record_ask": True,  # pergunta som e qualidade antes de gravar
     "addon_sql": True,  # extra: SQL e tabelas na leitura
+    "structure": False,  # aprende tabelas e colunas na Análise e abre o autocompletar pelo atalho
 }
 AUDIO = ("none", "system", "mic", "both")
 QUALITY = ("low", "medium", "high")
@@ -143,6 +147,14 @@ def hotkeys() -> dict[str, str]:
     return {name: str(settings.value(f"hotkeys/{name}", combo)) for name, combo in DEFAULT_HOTKEYS.items()}
 
 
+def active_hotkeys() -> dict[str, str]:
+    """Os atalhos que valem agora: o da estrutura só com o autocompletar ligado."""
+    keys = hotkeys()
+    if not option("structure"):
+        keys.pop("structure", None)
+    return keys
+
+
 def set_hotkey(name: str, combo: str) -> None:
     _settings().setValue(f"hotkeys/{name}", combo)
 
@@ -192,5 +204,21 @@ def history_dir() -> Path:
     return Path(data or Path.home()) / "Klick" / "history"
 
 
+def schema_path() -> Path:
+    """Onde ficam as tabelas e colunas aprendidas (ao lado do histórico)."""
+    return history_dir().parent / "estrutura.json"
+
+
 def default_filename(now: datetime | None = None, ext: str = "png") -> str:
     return f"klick_{(now or datetime.now()):%Y-%m-%d_%H-%M-%S}.{ext}"
+
+
+def free_path(folder: Path, name: str) -> Path:
+    """`folder/name`, ou `name_2`, `name_3`… se já existir: duas capturas no mesmo segundo não se sobrescrevem."""
+    target = folder / name
+    stem, suffix = target.stem, target.suffix
+    n = 2
+    while target.exists():
+        target = folder / f"{stem}_{n}{suffix}"
+        n += 1
+    return target
