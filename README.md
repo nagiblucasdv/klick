@@ -21,7 +21,7 @@ microfone ou ambos) e qualidade (baixa 15 fps, média 30 fps, alta 60 fps). `Ent
 apertar o atalho de novo para. A moldura vermelha e o controle com o tempo ficam fora do vídeo. O arquivo já fica no
 clipboard como arquivo, então é só colar no chat. O som do computador é gravado pelo loopback do Windows.
 
-Arrastar dentro da seleção move a área; um clique solto fora dela não apaga a seleção (só um arrasto começa outra);
+Arrastar dentro da seleção move a área e os pontos nos cantos e lados ajustam o tamanho; um clique solto fora dela não apaga a seleção (só um arrasto começa outra);
 botão direito limpa; `Esc` cancela. A lupa junto ao cursor mostra a posição e a cor do pixel; `C` copia o código da cor.
 
 **Atalhos globais** (todos trocam em Configurações › Atalhos, clicando e apertando a combinação; vale tecla do FN do

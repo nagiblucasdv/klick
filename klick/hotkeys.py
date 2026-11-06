@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 
 from PySide6.QtCore import QObject, Signal
 
@@ -12,6 +13,24 @@ MODIFIERS = {"ctrl": "ctrl", "ctrl_l": "ctrl", "ctrl_r": "ctrl", "shift": "shift
              "shift_r": "shift", "alt": "alt", "alt_l": "alt", "alt_r": "alt", "alt_gr": "alt", "cmd": "cmd",
              "cmd_l": "cmd", "cmd_r": "cmd"}
 ORDER = ["ctrl", "shift", "alt", "cmd"]
+
+
+def print_screen_taken() -> bool:
+    """True se outro programa (o Lightshot, por exemplo) registrou a tecla PrtSc.
+
+    O Klick ouve o teclado por um gancho e não registra a tecla, então os dois abrem juntos: quando o Klick
+    fecha, sobra a tela escura do outro por baixo, parecendo uma captura nova.
+    """
+    if sys.platform != "win32":
+        return False
+    import ctypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    probe, vk_snapshot, already_registered = 0xB001, 0x2C, 1409
+    if user32.RegisterHotKey(None, probe, 0, vk_snapshot):
+        user32.UnregisterHotKey(None, probe)
+        return False
+    return ctypes.get_last_error() == already_registered
 
 
 class HotkeyListener(QObject):

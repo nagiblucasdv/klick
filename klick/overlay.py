@@ -26,6 +26,14 @@ CORNER = 14  # braço dos cantos da seleção
 LOUPE_PX = 15  # pixels de tela mostrados na lupa (ímpar: o do meio é o do cursor)
 LOUPE_ZOOM = 8
 FROST = 14  # quanto a tela é reduzida para o desfoque do vidro
+GRAB = 7  # distância da borda da seleção que ainda pega a alça de ajustar o tamanho
+HANDLE = 7  # lado do quadradinho das alças
+RESIZE_CURSORS = {
+    "t": Qt.CursorShape.SizeVerCursor, "b": Qt.CursorShape.SizeVerCursor,
+    "l": Qt.CursorShape.SizeHorCursor, "r": Qt.CursorShape.SizeHorCursor,
+    "tl": Qt.CursorShape.SizeFDiagCursor, "br": Qt.CursorShape.SizeFDiagCursor,
+    "tr": Qt.CursorShape.SizeBDiagCursor, "bl": Qt.CursorShape.SizeBDiagCursor,
+}
 
 CTRL_KEYS = {
     Qt.Key.Key_T: Action.READ,
@@ -117,7 +125,9 @@ class SelectionOverlay(QWidget):
         self._selection = QRectF()
         self._previous = QRectF()  # seleção de antes de um clique fora (volta se não virar arrasto)
         self._origin = QPointF()
-        self._drag: str | None = None  # "create" | "move"
+        self._drag: str | None = None  # "create" | "move" | "resize"
+        self._handle = ""  # alça sendo arrastada: "t", "br"… (cima, baixo, esquerda, direita)
+        self._before_resize = QRectF()
         self._started = False  # o arrasto já virou seleção nova
         self._cursor: QPointF | None = None
         self._picked: str | None = None  # cor copiada com C, mostrada na lupa
@@ -322,7 +332,13 @@ class SelectionOverlay(QWidget):
             return
         if event.button() != Qt.MouseButton.LeftButton:
             return
-        if self._has_selection() and self._selection.contains(pos):
+        handle = self._handle_at(pos)
+        if handle:
+            self._toolbar.hide()
+            self._drag = "resize"
+            self._handle = handle
+            self._before_resize = QRectF(self._selection)
+        elif self._has_selection() and self._selection.contains(pos):
             self._toolbar.hide()
             self._drag = "move"
             self._origin = pos - self._selection.topLeft()
@@ -355,9 +371,13 @@ class SelectionOverlay(QWidget):
             rect = QRectF(self._selection)
             rect.moveTopLeft(pos - self._origin)
             self._selection = self._keep_inside(rect)
+        elif self._drag == "resize":
+            self._resize_to(pos)
         else:
+            handle = self._handle_at(event.position())
             inside = self._has_selection() and self._selection.contains(event.position())
-            self.setCursor(Qt.CursorShape.SizeAllCursor if inside else Qt.CursorShape.CrossCursor)
+            self.setCursor(RESIZE_CURSORS[handle] if handle else
+                           Qt.CursorShape.SizeAllCursor if inside else Qt.CursorShape.CrossCursor)
         self.update()
 
     def mouseReleaseEvent(self, event) -> None:
@@ -390,7 +410,8 @@ class SelectionOverlay(QWidget):
     def mouseDoubleClickEvent(self, event) -> None:
         if self._marker is not None or self._direct_action is not None:
             return
-        if self._has_selection() and self._selection.contains(event.position()):
+        if self._has_selection() and self._selection.contains(event.position()) \
+                and not self._handle_at(event.position()):
             self._finish(Action.COPY)
 
     def paintEvent(self, event) -> None:
@@ -498,6 +519,36 @@ class SelectionOverlay(QWidget):
     def _place_toolbar(self) -> None:
         self._place_below(self._toolbar)
 
+    def _handle_at(self, pos: QPointF) -> str:
+        """Alça da seleção sob o ponto: "t", "b", "l", "r" ou um canto ("tl"…); "" se não tem. Editando, o recorte
+        fica fixo."""
+        if not self._has_selection() or self._marker is not None:
+            return ""
+        sel = self._selection
+        if not sel.adjusted(-GRAB, -GRAB, GRAB, GRAB).contains(pos):
+            return ""
+        top, bottom = abs(pos.y() - sel.top()), abs(pos.y() - sel.bottom())
+        left, right = abs(pos.x() - sel.left()), abs(pos.x() - sel.right())
+        vertical = ("t" if top <= bottom else "b") if min(top, bottom) <= GRAB else ""
+        horizontal = ("l" if left <= right else "r") if min(left, right) <= GRAB else ""
+        return vertical + horizontal
+
+    def _resize_to(self, pos: QPointF) -> None:
+        """Move só os lados da alça; o lado oposto fica parado. Passou do outro lado, a seleção inverte."""
+        left, top = self._before_resize.left(), self._before_resize.top()
+        right, bottom = self._before_resize.right(), self._before_resize.bottom()
+        if "l" in self._handle:
+            left = pos.x()
+        elif "r" in self._handle:
+            right = pos.x()
+        if "t" in self._handle:
+            top = pos.y()
+        elif "b" in self._handle:
+            bottom = pos.y()
+        rect = QRectF(QPointF(left, top), QPointF(right, bottom)).normalized()
+        if rect.width() >= MIN_SIZE and rect.height() >= MIN_SIZE:
+            self._selection = rect
+
     def _has_selection(self) -> bool:
         return self._selection.width() >= MIN_SIZE and self._selection.height() >= MIN_SIZE
 
@@ -547,7 +598,7 @@ class SelectionOverlay(QWidget):
         p.setPen(pen)
         p.drawRect(sel)
 
-        if self._drag == "create" and self._guides:
+        if self._drag in ("create", "resize") and self._guides:
             # Linhas dos terços enquanto arrasta, como no visor de uma câmera.
             guide = QPen(QColor(255, 255, 255, 80), 1)
             guide.setCosmetic(True)
@@ -571,9 +622,26 @@ class SelectionOverlay(QWidget):
             for y, dy, oy in ((sel.top() - 2, arm, -away), (sel.bottom() + 2, -arm, away)):
                 p.drawPolyline([QPointF(x + ox + dx, y + oy), QPointF(x + ox, y + oy), QPointF(x + ox, y + oy + dy)])
         p.restore()
+        if self._marker is None and self._drag != "create":
+            self._draw_handles(p)
 
         phys = to_physical(sel, self.size(), self._image.size())
         self._badge(p, f"{phys.width()} × {phys.height()}", sel.topLeft())
+
+    def _draw_handles(self, p: QPainter) -> None:
+        """Os pontos de ajuste: nos quatro cantos e, se couber, no meio de cada lado."""
+        sel = self._selection
+        points = [sel.topLeft(), sel.topRight(), sel.bottomLeft(), sel.bottomRight()]
+        if sel.width() >= 6 * HANDLE:
+            points += [QPointF(sel.center().x(), sel.top()), QPointF(sel.center().x(), sel.bottom())]
+        if sel.height() >= 6 * HANDLE:
+            points += [QPointF(sel.left(), sel.center().y()), QPointF(sel.right(), sel.center().y())]
+        p.save()
+        p.setPen(QPen(QColor(theme.PENA), 1))
+        p.setBrush(QColor("#ffffff"))
+        for point in points:
+            p.drawRect(QRectF(point.x() - HANDLE / 2, point.y() - HANDLE / 2, HANDLE, HANDLE))
+        p.restore()
 
     def _badge(self, p: QPainter, text: str, anchor: QPointF) -> None:
         p.setFont(theme.font(14, 600, display=True))

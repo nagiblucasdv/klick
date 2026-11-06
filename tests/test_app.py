@@ -69,3 +69,17 @@ def test_marked_selection_is_saved_as_edit(qapp, tmp_path, monkeypatch):
     marked.marked = True
     klick._on_finished(Action.COPY, marked)
     assert [e.source for e in klick._history.search()] == ["edit"]
+
+
+def test_warns_once_when_another_program_owns_print_screen(qapp, tmp_path, monkeypatch):
+    import klick.app
+    klick_app = make_app(tmp_path)
+    warnings = []
+    monkeypatch.setattr(klick_app, "_warn", warnings.append)
+    monkeypatch.setattr(klick.app, "print_screen_taken", lambda: True)
+    klick_app._end_session()
+    assert warnings == []  # só o app de verdade (run) confere
+    klick_app._check_print_screen = True
+    klick_app._end_session()
+    klick_app._end_session()
+    assert len(warnings) == 1 and "Lightshot" in warnings[0]

@@ -22,7 +22,7 @@ from klick.capture import Selection, grab_screens
 from klick.editor import EditorWindow
 from klick.history import History
 from klick.history_ui import HistoryWindow
-from klick.hotkeys import HotkeyListener
+from klick.hotkeys import HotkeyListener, print_screen_taken
 from klick.icon import app_icon
 from klick.library import Library
 from klick.overlay import CaptureSession
@@ -79,8 +79,10 @@ class KlickApp(QObject):
         self._ocrDone.connect(self._on_ocr_done)
 
         self._expire_timer = QTimer(self, interval=EXPIRE_EVERY_MS, timeout=self.expire)
+        self._check_print_screen = False  # confere uma vez, depois da primeira captura, se a tecla tem outro dono
 
     def run(self) -> None:
+        self._check_print_screen = True
         if QSystemTrayIcon.isSystemTrayAvailable():
             self._tray.show()
         if self._hotkeys.start():
@@ -241,7 +243,17 @@ class KlickApp(QObject):
 
     def _end_session(self) -> None:
         self._session = None
+        self._warn_print_screen_conflict()
         self._maybe_quit()
+
+    def _warn_print_screen_conflict(self) -> None:
+        if not self._check_print_screen:
+            return
+        self._check_print_screen = False
+        if "print_screen" in config.hotkeys()["capture"] and print_screen_taken():
+            self._warn("Outro programa também usa a tecla PrtSc\nO Lightshot, por exemplo. Os dois abrem juntos e, quando "
+                       "o Klick fecha, sobra a tela escura do outro. Feche esse programa ou troque o atalho nas "
+                       "configurações.")
 
     def _maybe_quit(self) -> None:
         idle = (self._session is None and not self._ocr_pending and self._indicator is None

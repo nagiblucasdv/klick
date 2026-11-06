@@ -1,10 +1,20 @@
-from PySide6.QtCore import QPoint, QRect, QRectF, Qt
+import pytest
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QImage
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication
 
 from klick.actions import Action
 from klick.capture import ScreenShot
 from klick.overlay import CaptureSession, SelectionOverlay
+
+
+@pytest.fixture(autouse=True)
+def close_overlays(qapp):
+    """Overlay aberto de um teste ficaria por cima do seguinte e pegaria o mouse dele."""
+    yield
+    for widget in QApplication.topLevelWidgets():
+        widget.close()
 
 
 def make_shot(scale: int = 1) -> tuple[ScreenShot, QImage]:
@@ -248,4 +258,68 @@ def test_c_copies_color_under_cursor(qapp):
     QTest.mouseMove(overlay, QPoint(30, 30))  # dentro do bloco vermelho
     QTest.keyClick(overlay, Qt.Key.Key_C)
     assert QGuiApplication.clipboard().text() == "#FF0000"
+    overlay.close()
+
+
+def selected_overlay() -> SelectionOverlay:
+    shot, _ = make_shot()
+    overlay = SelectionOverlay(shot)
+    overlay.show()
+    drag(overlay, QPoint(100, 100), QPoint(300, 200))
+    assert overlay.selection == QRectF(100, 100, 200, 100)
+    return overlay
+
+
+def test_handles_resize_only_their_sides(qapp):
+    # (de onde pega, para onde arrasta, seleção esperada) a partir de 100,100 até 300,200
+    for start, end, expected in (
+        (QPoint(300, 200), QPoint(350, 260), QRectF(100, 100, 250, 160)),  # canto de baixo, à direita
+        (QPoint(100, 100), QPoint(60, 80), QRectF(60, 80, 240, 120)),  # canto de cima, à esquerda
+        (QPoint(300, 150), QPoint(340, 170), QRectF(100, 100, 240, 100)),  # lado direito: a altura não muda
+        (QPoint(200, 100), QPoint(230, 40), QRectF(100, 40, 200, 160)),  # lado de cima: a largura não muda
+    ):
+        overlay = selected_overlay()
+        drag(overlay, start, end)
+        assert overlay.selection == expected
+        assert overlay._toolbar.isVisible()  # a barra volta para perto da seleção nova
+        overlay.close()
+
+
+def test_resize_past_the_other_side_flips_and_keeps_a_minimum(qapp):
+    overlay = selected_overlay()
+    drag(overlay, QPoint(300, 150), QPoint(40, 150))  # arrastou a direita para além da esquerda
+    assert overlay.selection == QRectF(40, 100, 60, 100)
+    drag(overlay, QPoint(100, 150), QPoint(40, 150))  # encostou um lado no outro: não some
+    assert overlay.selection.width() >= 3
+    overlay.close()
+
+
+def test_cursor_shows_the_handle_and_inside_still_moves(qapp):
+    overlay = selected_overlay()
+    QTest.mouseMove(overlay, QPoint(304, 204))  # um pouco fora do canto ainda pega
+    assert overlay.cursor().shape() == Qt.CursorShape.SizeFDiagCursor
+    QTest.mouseMove(overlay, QPoint(200, 100))
+    assert overlay.cursor().shape() == Qt.CursorShape.SizeVerCursor
+    QTest.mouseMove(overlay, QPoint(200, 150))
+    assert overlay.cursor().shape() == Qt.CursorShape.SizeAllCursor
+    drag(overlay, QPoint(200, 150), QPoint(230, 170))
+    assert overlay.selection == QRectF(130, 120, 200, 100)  # no meio continua movendo
+    overlay.close()
+
+
+def test_no_resize_while_editing(qapp):
+    overlay = selected_overlay()
+    overlay.enter_mark()
+    assert overlay._handle_at(QPointF(300, 200)) == ""  # o recorte da edição é fixo
+    overlay.close()
+
+
+def test_resize_in_record_mode_asks_again(qapp):
+    shot, _ = make_shot()
+    overlay = SelectionOverlay(shot, Action.RECORD)
+    overlay.show()
+    drag(overlay, QPoint(100, 100), QPoint(300, 200))
+    assert overlay.record_setup is not None
+    drag(overlay, QPoint(300, 200), QPoint(320, 220))
+    assert overlay.selection == QRectF(100, 100, 220, 120) and overlay.record_setup is not None
     overlay.close()
